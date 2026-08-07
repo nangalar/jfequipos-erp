@@ -2006,172 +2006,218 @@ export default function DashboardPage() {
           )}
 
         {moduloActivo === 'productos' && verificarPermisoModulo('productos') && (
-  <div className="space-y-6">
-    <div className="flex justify-between items-center">
-      <h3 className="text-xl font-bold text-white">Catálogo de Productos</h3>
-      <button type="button" onClick={() => setModalAltaAbierto(true)} className="bg-emerald-600 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer">+ Nuevo Producto</button>
-    </div>
-    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
-      No hay productos registrados en el sistema. Comience dando de alta su primer producto.
-    </div>
-  </div>
-)}
-
-{modalAltaAbierto && (
-  <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl">
-      <h3 className="text-xl font-bold text-white mb-4">Registrar Nuevo Elemento</h3>
-      
-      <div className="space-y-4">
-        <div>
-          <label className="block text-sm text-slate-400 mb-1">Nombre</label>
-          <input type="text" className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-white" placeholder="Ingrese el nombre..." />
-        </div>
-      </div>
-
-      <div className="flex justify-end gap-3 mt-6">
-        <button 
-          type="button" 
-          onClick={() => setModalAltaAbierto(false)}
-          className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors"
-        >
-          Cancelar
-        </button>
-        <button 
-          type="button" 
-          onClick={() => setModalAltaAbierto(false)}
-          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-colors"
-        >
-          Guardar
-        </button>
-      </div>
-    </div>
-  </div>
-)}
-
-          {moduloActivo === 'inventario' && verificarPermisoModulo('inventario') && (
-            <div className="space-y-6">
-              <h3 className="text-xl font-bold text-white">Inventario y Kardex</h3>
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
-                Sin movimientos ni existencias de inventario registradas.
-              </div>
+          <div className="space-y-6">
+            <div className="flex justify-between items-center">
+              <h3 className="text-xl font-bold text-white">Catálogo de Productos</h3>
+              <button type="button" onClick={() => setModalAltaAbierto(true)} className="bg-emerald-600 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer">+ Nuevo Producto</button>
             </div>
-          )}
-
-          {moduloActivo === 'clientes' && verificarPermisoModulo('clientes') && (
-            <div className="space-y-6">
-              <div className="flex justify-between items-center">
-                <h3 className="text-xl font-bold text-white">Módulo de Clientes</h3>
-                <button type="button" onClick={() => setModalClienteAbierto(true)} className="bg-blue-600 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer">+ Registrar Cliente</button>
+            {catalogoProductos.length === 0 ? (
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
+                No hay productos registrados en el sistema. Comience dando de alta su primer producto.
               </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {catalogoProductos.map(prod => (
+                  <div key={prod.id} className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-2">
+                    <h4 className="font-bold text-white text-sm">{prod.nombre}</h4>
+                    <p className="text-xs text-slate-400">Código: <span className="font-mono text-blue-400">{prod.codigo}</span></p>
+                    <p className="text-xs text-emerald-400 font-bold">Precio: {formatearMoneda(prod.precio)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {moduloActivo === 'inventario' && verificarPermisoModulo('inventario') && (
+          <div className="space-y-6">
+            <h3 className="text-xl font-bold text-white">Inventario y Kardex</h3>
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
+              Sin movimientos ni existencias de inventario registradas.
+            </div>
+          </div>
+        )}
+
+        {moduloActivo === 'clientes' && verificarPermisoModulo('clientes') && (
+          <div className="space-y-6">
+            <div className="flex justify-between items-center">
+              <h3 className="text-xl font-bold text-white">Módulo de Clientes</h3>
+              <button type="button" onClick={() => setModalClienteAbierto(true)} className="bg-blue-600 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer">+ Registrar Cliente</button>
+            </div>
+            {clientes.length === 0 ? (
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
                 No hay clientes registrados en la cartera.
               </div>
-            </div>
-          )}
-
-          {moduloActivo === 'proveedores' && verificarPermisoModulo('proveedores') && (
-            <div className="space-y-6">
-              <h3 className="text-xl font-bold text-white">Módulo de Proveedores</h3>
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
-                No hay proveedores registrados.
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {clientes.map(cli => (
+                  <div key={cli.id} className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-2">
+                    <h4 className="font-bold text-white text-sm">{cli.nombreComercial}</h4>
+                    <p className="text-xs text-slate-400">Responsable: {cli.responsable}</p>
+                    <p className="text-xs text-slate-400">Tel: {cli.telefono}</p>
+                  </div>
+                ))}
               </div>
-            </div>
-          )}
+            )}
+          </div>
+        )}
 
-          {moduloActivo === 'cxc' && verificarPermisoModulo('cxc') && (
-            <div className="space-y-6">
-              <h3 className="text-xl font-bold text-white">Cuentas por Cobrar (CxC)</h3>
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
-                No hay cuentas por cobrar ni ventas a crédito pendientes.
-              </div>
+        {moduloActivo === 'proveedores' && verificarPermisoModulo('proveedores') && (
+          <div className="space-y-6">
+            <h3 className="text-xl font-bold text-white">Módulo de Proveedores</h3>
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
+              No hay proveedores registrados.
             </div>
-          )}
+          </div>
+        )}
 
-          {moduloActivo === 'cxp' && verificarPermisoModulo('cxp') && (
-            <div className="space-y-6">
-              <h3 className="text-xl font-bold text-white">Cuentas por Pagar (CxP)</h3>
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
-                No hay facturas ni cuentas por pagar registradas.
-              </div>
+        {moduloActivo === 'cxc' && verificarPermisoModulo('cxc') && (
+          <div className="space-y-6">
+            <h3 className="text-xl font-bold text-white">Cuentas por Cobrar (CxC)</h3>
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
+              No hay cuentas por cobrar ni ventas a crédito pendientes.
             </div>
-          )}
+          </div>
+        )}
 
-          {moduloActivo === 'gastos' && verificarPermisoModulo('gastos') && (
-            <div className="space-y-6">
-              <h3 className="text-xl font-bold text-white">Gastos Operativos</h3>
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
-                No hay gastos operativos registrados en este período.
-              </div>
+        {moduloActivo === 'cxp' && verificarPermisoModulo('cxp') && (
+          <div className="space-y-6">
+            <h3 className="text-xl font-bold text-white">Cuentas por Pagar (CxP)</h3>
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
+              No hay facturas ni cuentas por pagar registradas.
             </div>
-          )}
+          </div>
+        )}
 
-          {moduloActivo === 'auditoria' && verificarPermisoModulo('auditoria') && (
-            <div className="space-y-6">
-              <h3 className="text-xl font-bold text-white">Auditoría de Inventarios</h3>
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
-                No hay auditorías activas o programadas.
-              </div>
+        {moduloActivo === 'gastos' && verificarPermisoModulo('gastos') && (
+          <div className="space-y-6">
+            <h3 className="text-xl font-bold text-white">Gastos Operativos</h3>
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
+              No hay gastos operativos registrados en este período.
             </div>
-          )}
+          </div>
+        )}
 
-          {moduloActivo === 'cotizaciones' && verificarPermisoModulo('cotizaciones') && (
-            <div className="space-y-6">
-              <h3 className="text-xl font-bold text-white">Cotizaciones (Vigencia 48h)</h3>
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
-                No hay cotizaciones activas.
-              </div>
+        {moduloActivo === 'auditoria' && verificarPermisoModulo('auditoria') && (
+          <div className="space-y-6">
+            <h3 className="text-xl font-bold text-white">Auditoría de Inventarios</h3>
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
+              No hay auditorías activas o programadas.
             </div>
-          )}
+          </div>
+        )}
 
-          {moduloActivo === 'ventas' && verificarPermisoModulo('ventas') && (
-            <div className="space-y-6">
-              <h3 className="text-xl font-bold text-white">Punto de Venta Profesional (POS)</h3>
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
-                El carrito de ventas está vacío. Registre o escanee productos para iniciar una venta.
-              </div>
+        {moduloActivo === 'cotizaciones' && verificarPermisoModulo('cotizaciones') && (
+          <div className="space-y-6">
+            <h3 className="text-xl font-bold text-white">Cotizaciones (Vigencia 48h)</h3>
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
+              No hay cotizaciones activas.
             </div>
-          )}
+          </div>
+        )}
 
-          {moduloActivo === 'reportes' && verificarPermisoModulo('reportes') && (
-            <div className="space-y-6">
-              <h3 className="text-xl font-bold text-white">Reportes Financieros</h3>
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
-                Sin movimientos financieros para generar reportes en este rango de fechas.
-              </div>
+        {moduloActivo === 'ventas' && verificarPermisoModulo('ventas') && (
+          <div className="space-y-6">
+            <h3 className="text-xl font-bold text-white">Punto de Venta Profesional (POS)</h3>
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
+              El carrito de ventas está vacío. Registre o escanee productos para iniciar una venta.
             </div>
-          )}
+          </div>
+        )}
 
-          {moduloActivo === 'historial' && verificarPermisoModulo('historial') && (
-            <div className="space-y-6">
-              <h3 className="text-xl font-bold text-white">Historial de Tickets y Reimpresión</h3>
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
-                No hay tickets de venta emitidos todavía.
-              </div>
+        {moduloActivo === 'reportes' && verificarPermisoModulo('reportes') && (
+          <div className="space-y-6">
+            <h3 className="text-xl font-bold text-white">Reportes Financieros</h3>
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
+              Sin movimientos financieros para generar reportes en este rango de fechas.
             </div>
-          )}
+          </div>
+        )}
 
-          {modalSinStockAbierto && (
-            <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-              <div className="bg-slate-900 border border-red-500 rounded-2xl p-6 max-w-sm w-full shadow-2xl text-center space-y-4">
-                <h3 className="text-lg font-bold text-red-400">⚠️ No hay stock</h3>
-                <p className="text-xs text-slate-300">{mensajeSinStock}</p>
-                <button type="button" onClick={() => setModalSinStockAbierto(false)} className="bg-red-600 text-white font-bold px-6 py-2 rounded-xl text-xs w-full cursor-pointer">Aceptar</button>
-              </div>
+        {moduloActivo === 'historial' && verificarPermisoModulo('historial') && (
+          <div className="space-y-6">
+            <h3 className="text-xl font-bold text-white">Historial de Tickets y Reimpresión</h3>
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
+              No hay tickets de venta emitidos todavía.
             </div>
-          )}
+          </div>
+        )}
 
-          {modalNotifAbierto && (
-            <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-              <div className="bg-slate-900 border border-emerald-500 rounded-2xl p-6 max-w-sm w-full shadow-2xl text-center space-y-4">
-                <h3 className="text-lg font-bold text-emerald-400">✅ Operación Exitosa</h3>
-                <p className="text-xs text-slate-300">{mensajeNotif}</p>
-                <button type="button" onClick={() => setModalNotifAbierto(false)} className="bg-emerald-600 text-white font-bold px-6 py-2 rounded-xl text-xs w-full cursor-pointer">Aceptar</button>
-              </div>
+        {/* MODAL DE ALTA DE PRODUCTOS */}
+        {modalAltaAbierto && (
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-4">
+              <h3 className="text-lg font-bold text-white">Registrar Nuevo Producto</h3>
+              <form onSubmit={registrarProductoCatalogo} className="space-y-3 text-xs">
+                <div>
+                  <label className="block text-slate-400 mb-1">Código o SKU *</label>
+                  <input type="text" value={fCodigo} onChange={(e) => setFCodigo(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" placeholder="Ej. PROD-001" />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1">Nombre del Producto *</label>
+                  <input type="text" value={fNombre} onChange={(e) => setFNombre(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" placeholder="Ej. Caminadora Profesional" />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1">Precio de Venta ($ MXN) *</label>
+                  <input type="number" value={fPVenta} onChange={(e) => setFPVenta(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" placeholder="0.00" />
+                </div>
+                <div className="flex justify-end gap-2 pt-3">
+                  <button type="button" onClick={() => setModalAltaAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer">Cancelar</button>
+                  <button type="submit" className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2 rounded-xl cursor-pointer">Guardar Producto</button>
+                </div>
+              </form>
             </div>
+          </div>
+        )}
+
+        {/* MODAL DE CLIENTES */}
+        {modalClienteAbierto && (
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-4">
+              <h3 className="text-lg font-bold text-white">Registrar Nuevo Cliente</h3>
+              <form onSubmit={guardarCliente} className="space-y-3 text-xs">
+                <div>
+                  <label className="block text-slate-400 mb-1">Nombre Comercial *</label>
+                  <input type="text" value={cNombreComercial} onChange={(e) => setCNombreComercial(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" placeholder="Ej. Gimnasio Iron Fitness" />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1">Responsable / Contacto *</label>
+                  <input type="text" value={cResponsable} onChange={(e) => setCResponsable(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" placeholder="Ej. Lic. Roberto Gómez" />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1">Teléfono</label>
+                  <input type="text" value={cTelefono} onChange={(e) => setCTelefono(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" placeholder="55 0000 0000" />
+                </div>
+                <div className="flex justify-end gap-2 pt-3">
+                  <button type="button" onClick={() => setModalClienteAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer">Cancelar</button>
+                  <button type="submit" className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-5 py-2 rounded-xl cursor-pointer">Guardar Cliente</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {modalSinStockAbierto && (
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+            <div className="bg-slate-900 border border-red-500 rounded-2xl p-6 max-w-sm w-full shadow-2xl text-center space-y-4">
+              <h3 className="text-lg font-bold text-red-400">⚠️ No hay stock</h3>
+              <p className="text-xs text-slate-300">{mensajeSinStock}</p>
+              <button type="button" onClick={() => setModalSinStockAbierto(false)} className="bg-red-600 text-white font-bold px-6 py-2 rounded-xl text-xs w-full cursor-pointer">Aceptar</button>
+            </div>
+          </div>
+        )}
+
+        {modalNotifAbierto && (
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+            <div className="bg-slate-900 border border-emerald-500 rounded-2xl p-6 max-w-sm w-full shadow-2xl text-center space-y-4">
+              <h3 className="text-lg font-bold text-emerald-400">✅ Operación Exitosa</h3>
+              <p className="text-xs text-slate-300">{mensajeNotif}</p>
+              <button type="button" onClick={() => setModalNotifAbierto(false)} className="bg-emerald-600 text-white font-bold px-6 py-2 rounded-xl text-xs w-full cursor-pointer">Aceptar</button>
+            </div>
+          </div>
           )}
-        </div>
-      </main>
-    </div>
+      </div>
+  </main>
+</div>
   );
 }
