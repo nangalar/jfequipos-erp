@@ -2031,10 +2031,34 @@ export default function DashboardPage() {
 
         {moduloActivo === 'inventario' && verificarPermisoModulo('inventario') && (
           <div className="space-y-6">
-            <h3 className="text-xl font-bold text-white">Inventario y Kardex</h3>
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
-              Sin movimientos ni existencias de inventario registradas.
+            <div className="flex justify-between items-center">
+              <h3 className="text-xl font-bold text-white">Inventario y Kardex</h3>
+              <div className="flex gap-2">
+                <button 
+                  type="button" 
+                  onClick={() => setModalIngresoStockAbierto(true)} 
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer"
+                >
+                  + Ingreso de Stock
+                </button>
+              </div>
             </div>
+
+            {inventarioSucursales.length === 0 ? (
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
+                Sin movimientos ni existencias de inventario registradas.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {inventarioSucursales.map((inv, idx) => (
+                  <div key={idx} className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-2">
+                    <h4 className="font-bold text-white text-sm">Sucursal: {inv.sucursal}</h4>
+                    <p className="text-xs text-slate-400">Almacén: {inv.almacen}</p>
+                    <p className="text-xs text-blue-400 font-bold">Stock Actual: {inv.stockActual} unidades</p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -2056,82 +2080,292 @@ export default function DashboardPage() {
 
         {moduloActivo === 'proveedores' && verificarPermisoModulo('proveedores') && (
           <div className="space-y-6">
-            <h3 className="text-xl font-bold text-white">Módulo de Proveedores</h3>
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
-              No hay proveedores registrados.
+            <div className="flex justify-between items-center">
+              <h3 className="text-xl font-bold text-white">Módulo de Proveedores</h3>
+              <button 
+                type="button" 
+                onClick={() => setModalProveedorAbierto(true)} 
+                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer"
+              >
+                + Registrar Proveedor
+              </button>
             </div>
+
+            {proveedores.length === 0 ? (
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
+                No hay proveedores registrados.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {proveedores.map(prov => (
+                  <div key={prov.id} className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-2">
+                    <h4 className="font-bold text-white text-sm">{prov.nombreComercial}</h4>
+                    <p className="text-xs text-slate-400">RFC: <span className="font-mono text-blue-400">{prov.rfc}</span></p>
+                    <p className="text-xs text-slate-400">Contacto: {prov.contactos}</p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
         {moduloActivo === 'cxc' && verificarPermisoModulo('cxc') && (
           <div className="space-y-6">
-            <h3 className="text-xl font-bold text-white">Cuentas por Cobrar (CxC)</h3>
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
-              No hay cuentas por cobrar ni ventas a crédito pendientes.
+            <div className="flex justify-between items-center">
+              <h3 className="text-xl font-bold text-white">Cuentas por Cobrar (CxC)</h3>
             </div>
+
+            {cuentasPorCobrar.length === 0 ? (
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
+                No hay cuentas por cobrar ni ventas a crédito pendientes.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {cuentasPorCobrar.map(cuenta => (
+                  <div key={cuenta.id} className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-2">
+                    <h4 className="font-bold text-white text-sm">{cuenta.clienteNombre}</h4>
+                    <p className="text-xs text-slate-400">Folio: <span className="font-mono text-blue-400">{cuenta.folioVenta}</span></p>
+                    <p className="text-xs text-amber-400 font-bold">Saldo Pendiente: ${cuenta.saldoPendiente.toFixed(2)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
         {moduloActivo === 'cxp' && verificarPermisoModulo('cxp') && (
           <div className="space-y-6">
-            <h3 className="text-xl font-bold text-white">Cuentas por Pagar (CxP)</h3>
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
-              No hay facturas ni cuentas por pagar registradas.
+            <div className="flex justify-between items-center">
+              <h3 className="text-xl font-bold text-white">Cuentas por Pagar (CxP)</h3>
+              <button 
+                type="button" 
+                onClick={() => setModalCxPAbierto(true)} 
+                className="bg-amber-600 hover:bg-amber-500 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer"
+              >
+                + Registrar Factura / CxP
+              </button>
             </div>
+
+            {cuentasPorPagar.length === 0 ? (
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
+                No hay facturas ni cuentas por pagar registradas.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {cuentasPorPagar.map(cuenta => (
+                  <div key={cuenta.id} className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-2">
+                    <h4 className="font-bold text-white text-sm">{cuenta.proveedorNombre}</h4>
+                    <p className="text-xs text-slate-400">Factura: <span className="font-mono text-blue-400">{cuenta.folioFactura}</span></p>
+                    <p className="text-xs text-amber-400 font-bold">Saldo: ${cuenta.saldoPendiente.toFixed(2)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
         {moduloActivo === 'gastos' && verificarPermisoModulo('gastos') && (
           <div className="space-y-6">
-            <h3 className="text-xl font-bold text-white">Gastos Operativos</h3>
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
-              No hay gastos operativos registrados en este período.
+            <div className="flex justify-between items-center">
+              <h3 className="text-xl font-bold text-white">Gastos Operativos</h3>
+              <button 
+                type="button" 
+                onClick={() => setModalGastoAbierto(true)} 
+                className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer"
+              >
+                + Registrar Gasto
+              </button>
             </div>
+
+            {gastos.length === 0 ? (
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
+                No hay gastos operativos registrados en este período.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {gastos.map(gasto => (
+                  <div key={gasto.id} className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-2">
+                    <h4 className="font-bold text-white text-sm">{gasto.categoria}</h4>
+                    <p className="text-xs text-slate-400">Folio: <span className="font-mono text-blue-400">{gasto.folio}</span></p>
+                    <p className="text-xs text-emerald-400 font-bold">Total: ${gasto.total.toFixed(2)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
         {moduloActivo === 'auditoria' && verificarPermisoModulo('auditoria') && (
           <div className="space-y-6">
-            <h3 className="text-xl font-bold text-white">Auditoría de Inventarios</h3>
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
-              No hay auditorías activas o programadas.
+            <div className="flex justify-between items-center">
+              <h3 className="text-xl font-bold text-white">Auditoría de Inventarios</h3>
+              <button 
+                type="button" 
+                onClick={() => setModalAuditoriaAbierto(true)} 
+                className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer"
+              >
+                + Programar Auditoría
+              </button>
             </div>
+
+            {auditorias.length === 0 ? (
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
+                No hay auditorías activas o programadas.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {auditorias.map(aud => (
+                  <div key={aud.id} className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-2">
+                    <h4 className="font-bold text-white text-sm">Folio: {aud.folio}</h4>
+                    <p className="text-xs text-slate-400">Alcance: {aud.tipoAlcance} ({aud.valorAlcance})</p>
+                    <p className="text-xs text-amber-400 font-bold">Estatus: {aud.estatus}</p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
         {moduloActivo === 'cotizaciones' && verificarPermisoModulo('cotizaciones') && (
           <div className="space-y-6">
-            <h3 className="text-xl font-bold text-white">Cotizaciones (Vigencia 48h)</h3>
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
-              No hay cotizaciones activas.
+            <div className="flex justify-between items-center">
+              <h3 className="text-xl font-bold text-white">Cotizaciones (Vigencia 48h)</h3>
             </div>
+
+            {cotizaciones.length === 0 ? (
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
+                No hay cotizaciones activas.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {cotizaciones.map(cot => (
+                  <div key={cot.folio} className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-2">
+                    <h4 className="font-bold text-white text-sm">Folio: {cot.folio}</h4>
+                    <p className="text-xs text-slate-400">Cliente: {cot.cliente || 'P público general'}</p>
+                    <p className="text-xs text-emerald-400 font-bold">Total: ${cot.total.toFixed(2)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
         {moduloActivo === 'ventas' && verificarPermisoModulo('ventas') && (
           <div className="space-y-6">
-            <h3 className="text-xl font-bold text-white">Punto de Venta Profesional (POS)</h3>
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
-              El carrito de ventas está vacío. Registre o escanee productos para iniciar una venta.
+            <div className="flex justify-between items-center">
+              <h3 className="text-xl font-bold text-white">Punto de Venta Profesional (POS)</h3>
+              <div className="text-xs bg-slate-900 border border-slate-800 px-3 py-2 rounded-xl text-slate-300">
+                Sucursal Activa: <strong className="text-blue-400">{sucursalActivaPOS}</strong>
+              </div>
             </div>
+
+            {carrito.length === 0 ? (
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs space-y-3">
+                <p>El carrito de ventas está vacío. Escanee o seleccione productos del catálogo para iniciar una venta.</p>
+                <button 
+                  type="button" 
+                  onClick={() => setModuloActivo('productos')} 
+                  className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer inline-block"
+                >
+                  Ir al Catálogo de Productos
+                </button>
+              </div>
+            ) : (
+              <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl space-y-4">
+                <h4 className="font-bold text-white text-sm">Artículos en el Carrito ({carrito.length})</h4>
+                <div className="divide-y divide-slate-800">
+                  {carrito.map((item, idx) => (
+                    <div key={idx} className="py-2 flex justify-between items-center text-xs">
+                      <div>
+                        <span className="text-white font-bold">{item.cantidadVendida}x {item.nombre}</span>
+                        <p className="text-[10px] text-slate-400">Código: {item.codigo}</p>
+                      </div>
+                      <span className="text-emerald-400 font-bold">${(item.precio * item.cantidadVendida).toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="pt-4 border-t border-slate-800 flex justify-between items-center font-bold text-sm">
+                  <span>Total a Pagar:</span>
+                  <span className="text-emerald-400 text-base">${total.toFixed(2)}</span>
+                </div>
+                <button 
+                  type="button" 
+                  onClick={procesarVenta} 
+                  className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl text-xs cursor-pointer shadow-lg"
+                >
+                  Cobrar y Generar Ticket
+                </button>
+              </div>
+            )}
           </div>
         )}
 
         {moduloActivo === 'reportes' && verificarPermisoModulo('reportes') && (
           <div className="space-y-6">
-            <h3 className="text-xl font-bold text-white">Reportes Financieros</h3>
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
-              Sin movimientos financieros para generar reportes en este rango de fechas.
+            <div className="flex justify-between items-center">
+              <h3 className="text-xl font-bold text-white">Reportes Financieros</h3>
+              <div className="flex gap-2">
+                <button 
+                  type="button" 
+                  onClick={exportarExcelReporte} 
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer"
+                >
+                  📥 Exportar Excel (CSV)
+                </button>
+                <button 
+                  type="button" 
+                  onClick={exportarPDFReporte} 
+                  className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer"
+                >
+                  🖨️ Imprimir / PDF
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
+              <h4 className="font-bold text-white text-sm">Filtros de Período</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                <div>
+                  <label className="block text-slate-400 mb-1">Fecha de Inicio</label>
+                  <input type="date" value={fechaInicioReporte} onChange={(e) => setFechaInicioReporte(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1">Fecha de Fin</label>
+                  <input type="date" value={fechaFinReporte} onChange={(e) => setFechaFinReporte(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+                </div>
+              </div>
             </div>
           </div>
         )}
 
         {moduloActivo === 'historial' && verificarPermisoModulo('historial') && (
           <div className="space-y-6">
-            <h3 className="text-xl font-bold text-white">Historial de Tickets y Reimpresión</h3>
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
-              No hay tickets de venta emitidos todavía.
+            <div className="flex justify-between items-center">
+              <h3 className="text-xl font-bold text-white">Historial de Tickets y Reimpresión</h3>
             </div>
+
+            {historialTickets.length === 0 ? (
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
+                No hay tickets de venta emitidos todavía.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {historialTickets.map(ticket => (
+                  <div key={ticket.folio} className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-2">
+                    <h4 className="font-bold text-white text-sm">Folio: {ticket.folio}</h4>
+                    <p className="text-xs text-slate-400">Cliente: {ticket.cliente || 'Público General'}</p>
+                    <p className="text-xs text-emerald-400 font-bold">Total: ${ticket.total.toFixed(2)}</p>
+                    <button 
+                      type="button" 
+                      onClick={() => ejecutarDescargaTicketPDF(ticket)} 
+                      className="w-full mt-2 bg-slate-800 hover:bg-slate-700 text-blue-400 font-bold py-1.5 rounded-lg text-xs cursor-pointer border border-slate-700"
+                    >
+                      🖨️ Reimprimir Ticket
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
