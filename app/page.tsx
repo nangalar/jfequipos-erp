@@ -289,7 +289,6 @@ export default function DashboardPage() {
   ]);
 
   const [rolEditandoPermisos, setRolEditandoPermisos] = useState<RolPermisos | null>(null);
-  const [modalPermisosAbierto, setModalPermisosAbierto] = useState<boolean>(false);
 
   const [moduloActivo, setModuloActivo] = useState<string>('inicio');
   
@@ -324,7 +323,7 @@ export default function DashboardPage() {
   const [modalNotaCreditoAbierto, setModalNotaCreditoAbierto] = useState<boolean>(false);
   const [montoNotaCredito, setMontoNotaCredito] = useState<string>('');
 
-  const [modalPromesaAbierto, setModalPromesaAbierto] = useState<boolean>(false);
+  const [modalPermisosAbierto, setModalPermisosAbierto] = useState<boolean>(false);
   const [textoPromesaInput, setTextoPromesaInput] = useState<string>('');
 
   const [modalAutorizacionAbierto, setModalAutorizacionAbierto] = useState<boolean>(false);
