@@ -2005,17 +2005,49 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {moduloActivo === 'productos' && verificarPermisoModulo('productos') && (
-            <div className="space-y-6">
-              <div className="flex justify-between items-center">
-                <h3 className="text-xl font-bold text-white">Catálogo de Productos</h3>
-                <button type="button" onClick={() => setModalAltaAbierto(true)} className="bg-emerald-600 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer">+ Nuevo Producto</button>
-              </div>
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
-                No hay productos registrados en el sistema. Comience dando de alta su primer producto.
-              </div>
-            </div>
-          )}
+        {moduloActivo === 'productos' && verificarPermisoModulo('productos') && (
+  <div className="space-y-6">
+    <div className="flex justify-between items-center">
+      <h3 className="text-xl font-bold text-white">Catálogo de Productos</h3>
+      <button type="button" onClick={() => setModalAltaAbierto(true)} className="bg-emerald-600 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer">+ Nuevo Producto</button>
+    </div>
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500 text-xs">
+      No hay productos registrados en el sistema. Comience dando de alta su primer producto.
+    </div>
+  </div>
+)}
+
+{modalAltaAbierto && (
+  <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl">
+      <h3 className="text-xl font-bold text-white mb-4">Registrar Nuevo Elemento</h3>
+      
+      <div className="space-y-4">
+        <div>
+          <label className="block text-sm text-slate-400 mb-1">Nombre</label>
+          <input type="text" className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-white" placeholder="Ingrese el nombre..." />
+        </div>
+      </div>
+
+      <div className="flex justify-end gap-3 mt-6">
+        <button 
+          type="button" 
+          onClick={() => setModalAltaAbierto(false)}
+          className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors"
+        >
+          Cancelar
+        </button>
+        <button 
+          type="button" 
+          onClick={() => setModalAltaAbierto(false)}
+          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-colors"
+        >
+          Guardar
+        </button>
+      </div>
+    </div>
+  </div>
+)}
 
           {moduloActivo === 'inventario' && verificarPermisoModulo('inventario') && (
             <div className="space-y-6">
