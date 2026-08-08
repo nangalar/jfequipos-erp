@@ -2442,41 +2442,48 @@ export default function DashboardPage() {
             </div>
           </div>
           )}
-      {/* MODAL DE REGISTRO DE PROVEEDORES */}
+      {/* MODAL DE PROVEEDORES */}
         {modalProveedorAbierto && (
           <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-4">
-              <h3 className="text-lg font-bold text-white">Registrar Nuevo Proveedor</h3>
-              <form onSubmit={guardarProveedor} className="space-y-3 text-xs">
+              <h3 className="text-lg font-bold text-white">Registrar Proveedor</h3>
+              <form onSubmit={(e) => { e.preventDefault(); setModalProveedorAbierto(false); }} className="space-y-3 text-xs">
                 <div>
-                  <label className="block text-slate-400 mb-1">Razón Social *</label>
-                  <input type="text" value={pRazonSocial} onChange={(e) => setPRazonSocial(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" placeholder="Ej. Global Fitness S.A. de C.V." />
-                </div>
-                <div>
-                  <label className="block text-slate-400 mb-1">Nombre Comercial *</label>
-                  <input type="text" value={pNombreComercial} onChange={(e) => setPNombreComercial(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" placeholder="Ej. Global Fitness" />
+                  <label className="block text-slate-400 mb-1">Nombre Comercial / Razón Social *</label>
+                  <input type="text" required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" placeholder="Ej. Proveedor S.A. de C.V." />
                 </div>
                 <div>
                   <label className="block text-slate-400 mb-1">RFC *</label>
-                  <input type="text" value={pRfc} onChange={(e) => setPRfc(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono uppercase" placeholder="XAXX010101000" />
+                  <input type="text" required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white uppercase" placeholder="XAXX010101000" />
                 </div>
                 <div className="flex justify-end gap-2 pt-3">
                   <button type="button" onClick={() => setModalProveedorAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer">Cancelar</button>
-                  <button type="submit" className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2 rounded-xl cursor-pointer">Guardar Proveedor</button>
+                  <button type="submit" className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2 rounded-xl cursor-pointer">Guardar</button>
                 </div>
               </form>
             </div>
           </div>
         )}
+
         {/* MODAL DE CUENTAS POR PAGAR (CxP) */}
         {modalCxPAbierto && (
           <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-4">
-              <h3 className="text-lg font-bold text-white">Módulo Cuentas por Pagar</h3>
-              <p className="text-xs text-slate-400">Panel de control y registro de facturas pendientes.</p>
-              <div className="flex justify-end gap-2 pt-3">
-                <button type="button" onClick={() => setModalCxPAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer text-xs">Cerrar</button>
-              </div>
+              <h3 className="text-lg font-bold text-white">Registrar Cuenta por Pagar</h3>
+              <form onSubmit={(e) => { e.preventDefault(); setModalCxPAbierto(false); }} className="space-y-3 text-xs">
+                <div>
+                  <label className="block text-slate-400 mb-1">Folio de Factura *</label>
+                  <input type="text" required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" placeholder="Ej. FAC-001" />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1">Monto Total *</label>
+                  <input type="number" step="0.01" required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" placeholder="0.00" />
+                </div>
+                <div className="flex justify-end gap-2 pt-3">
+                  <button type="button" onClick={() => setModalCxPAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer">Cancelar</button>
+                  <button type="submit" className="bg-amber-600 hover:bg-amber-500 text-white font-bold px-5 py-2 rounded-xl cursor-pointer">Guardar</button>
+                </div>
+              </form>
             </div>
           </div>
         )}
@@ -2485,11 +2492,21 @@ export default function DashboardPage() {
         {modalGastoAbierto && (
           <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-4">
-              <h3 className="text-lg font-bold text-white">Módulo de Gastos Operativos</h3>
-              <p className="text-xs text-slate-400">Registro y control de salidas de dinero.</p>
-              <div className="flex justify-end gap-2 pt-3">
-                <button type="button" onClick={() => setModalGastoAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer text-xs">Cerrar</button>
-              </div>
+              <h3 className="text-lg font-bold text-white">Registrar Gasto Operativo</h3>
+              <form onSubmit={(e) => { e.preventDefault(); setModalGastoAbierto(false); }} className="space-y-3 text-xs">
+                <div>
+                  <label className="block text-slate-400 mb-1">Categoría del Gasto *</label>
+                  <input type="text" required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" placeholder="Ej. Luz, Renta, Insumos" />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1">Total *</label>
+                  <input type="number" step="0.01" required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" placeholder="0.00" />
+                </div>
+                <div className="flex justify-end gap-2 pt-3">
+                  <button type="button" onClick={() => setModalGastoAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer">Cancelar</button>
+                  <button type="submit" className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-5 py-2 rounded-xl cursor-pointer">Guardar Gasto</button>
+                </div>
+              </form>
             </div>
           </div>
         )}
@@ -2498,11 +2515,17 @@ export default function DashboardPage() {
         {modalAuditoriaAbierto && (
           <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-4">
-              <h3 className="text-lg font-bold text-white">Auditoría de Inventarios</h3>
-              <p className="text-xs text-slate-400">Programación y revisión de existencias.</p>
-              <div className="flex justify-end gap-2 pt-3">
-                <button type="button" onClick={() => setModalAuditoriaAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer text-xs">Cerrar</button>
-              </div>
+              <h3 className="text-lg font-bold text-white">Programar Auditoría</h3>
+              <form onSubmit={(e) => { e.preventDefault(); setModalAuditoriaAbierto(false); }} className="space-y-3 text-xs">
+                <div>
+                  <label className="block text-slate-400 mb-1">Alcance de la Auditoría *</label>
+                  <input type="text" required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" placeholder="Ej. Sucursal Completa" />
+                </div>
+                <div className="flex justify-end gap-2 pt-3">
+                  <button type="button" onClick={() => setModalAuditoriaAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer">Cancelar</button>
+                  <button type="submit" className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-5 py-2 rounded-xl cursor-pointer">Programar</button>
+                </div>
+              </form>
             </div>
           </div>
         )}
@@ -2511,11 +2534,17 @@ export default function DashboardPage() {
         {modalIngresoStockAbierto && (
           <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-4">
-              <h3 className="text-lg font-bold text-white">Ingreso de Stock</h3>
-              <p className="text-xs text-slate-400">Alta de mercancía al almacén.</p>
-              <div className="flex justify-end gap-2 pt-3">
-                <button type="button" onClick={() => setModalIngresoStockAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer text-xs">Cerrar</button>
-              </div>
+              <h3 className="text-lg font-bold text-white">Ingreso de Stock al Inventario</h3>
+              <form onSubmit={(e) => { e.preventDefault(); setModalIngresoStockAbierto(false); }} className="space-y-3 text-xs">
+                <div>
+                  <label className="block text-slate-400 mb-1">Cantidad de Unidades *</label>
+                  <input type="number" required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" placeholder="0" />
+                </div>
+                <div className="flex justify-end gap-2 pt-3">
+                  <button type="button" onClick={() => setModalIngresoStockAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer">Cancelar</button>
+                  <button type="submit" className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2 rounded-xl cursor-pointer">Registrar Ingreso</button>
+                </div>
+              </form>
             </div>
           </div>
         )}
