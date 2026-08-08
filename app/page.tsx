@@ -1110,8 +1110,17 @@ export default function DashboardPage() {
   };
 
   const registrarProductoCatalogo = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!fCodigo || !fNombre || !fPVenta) return;
+  e.preventDefault();
+  if (!fCodigo || !fNombre || !fPVenta) return;
+
+  // 1. VALIDACIÓN PARA EVITAR DUPLICADOS POR CÓDIGO (SKU)
+  const codigoDuplicado = catalogoProductos.some(
+    (p) => p.codigo.toLowerCase() === fCodigo.trim().toLowerCase()
+  );
+  if (codigoDuplicado) {
+    alert("Error: Ya existe un producto registrado con este mismo Código / SKU.");
+    return;
+  }
 
     const precioV = Number(fPVenta) || 0;
     const costoV = fPCompra ? Number(fPCompra) : precioV * 0.6;
