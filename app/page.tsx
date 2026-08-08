@@ -232,6 +232,7 @@ interface TicketGuardado {
   fecha: string;
   cliente: string;
   metodoPago: string;
+  sucursal: string;
   items: ItemVenta[];
   subtotalBruto: number;
   descuentoTotal: number;
@@ -246,6 +247,7 @@ interface UsuarioSistema {
   email: string;
   password: string;
   rol: string;
+  sucursalId: number | null;
   activo: boolean;
 }
 
@@ -254,10 +256,28 @@ interface RolPermisos {
   modulosPermitidos: string[];
 }
 
+interface Sucursal {
+  id: number;
+  clave: string;
+  nombre: string;
+  tipo: 'Matriz' | 'Sucursal';
+  direccion: string;
+  estado: string;
+  municipio: string;
+  codigoPostal: string;
+  telefono: string;
+  responsable: string;
+  correo: string;
+  almacenPrincipal: string;
+  estatus: 'Activa' | 'Inactiva';
+  fechaAlta: string;
+}
+
 const LISTA_MODULOS_DISPONIBLES = [
   { id: 'inicio', nombre: '📊 Panel General' },
   { id: 'productos', nombre: '🏷️ Productos' },
   { id: 'inventario', nombre: '📦 Inventario / Kardex' },
+  { id: 'sucursales', nombre: '🏢 Sucursales' },
   { id: 'clientes', nombre: '👥 Clientes' },
   { id: 'proveedores', nombre: '🏭 Proveedores' },
   { id: 'cxc', nombre: '📑 Cuentas por Cobrar' },
@@ -279,18 +299,36 @@ export default function DashboardPage() {
   const [emailRecuperacion, setEmailRecuperacion] = useState<string>('');
 
   const [usuariosSistema, setUsuariosSistema] = useState<UsuarioSistema[]>([
-    { id: 1, nombre: 'Administrador', email: 'admin@jfequipos.com', password: 'admin123', rol: 'Administrador', activo: true }
+    { id: 1, nombre: 'Administrador', email: 'admin@jfequipos.com', password: 'admin123', rol: 'Administrador', sucursalId: null, activo: true }
   ]);
 
   const [rolesSistema, setRolesSistema] = useState<RolPermisos[]>([
-    { nombreRol: 'Administrador', modulosPermitidos: ['inicio', 'productos', 'inventario', 'clientes', 'proveedores', 'cxc', 'cxp', 'gastos', 'auditoria', 'cotizaciones', 'ventas', 'reportes', 'historial', 'usuarios'] },
-    { nombreRol: 'Operador / Ventas', modulosPermitidos: ['inicio', 'productos', 'clientes', 'cotizaciones', 'ventas', 'historial'] }
+    { nombreRol: 'Administrador', modulosPermitidos: ['inicio', 'productos', 'inventario', 'sucursales', 'clientes', 'proveedores', 'cxc', 'cxp', 'gastos', 'auditoria', 'cotizaciones', 'ventas', 'reportes', 'historial', 'usuarios'] },
+    { nombreRol: 'Operador / Ventas', modulosPermitidos: ['inicio', 'productos', 'clientes', 'cotizaciones', 'ventas', 'historial'] },
+    { nombreRol: 'Cajero', modulosPermitidos: ['ventas', 'historial'] }
   ]);
 
   const [rolEditandoPermisos, setRolEditandoPermisos] = useState<RolPermisos | null>(null);
   const [modalPermisosAbierto, setModalPermisosAbierto] = useState<boolean>(false);
 
   const [moduloActivo, setModuloActivo] = useState<string>('inicio');
+
+  // Catálogo maestro de sucursales. Inicia vacío para que el cliente registre sus ubicaciones reales.
+  const [sucursales, setSucursales] = useState<Sucursal[]>([]);
+  const [modalSucursalAbierto, setModalSucursalAbierto] = useState<boolean>(false);
+  const [sucursalEditando, setSucursalEditando] = useState<Sucursal | null>(null);
+  const [sClave, setSClave] = useState('');
+  const [sNombre, setSNombre] = useState('');
+  const [sTipo, setSTipo] = useState<Sucursal['tipo']>('Sucursal');
+  const [sDireccion, setSDireccion] = useState('');
+  const [sEstado, setSEstado] = useState('');
+  const [sMunicipio, setSMunicipio] = useState('');
+  const [sCodigoPostal, setSCodigoPostal] = useState('');
+  const [sTelefono, setSTelefono] = useState('');
+  const [sResponsable, setSResponsable] = useState('');
+  const [sCorreo, setSCorreo] = useState('');
+  const [sAlmacenPrincipal, setSAlmacenPrincipal] = useState('');
+  const [sEstatus, setSEstatus] = useState<Sucursal['estatus']>('Activa');
   
   const [catalogoProductos, setCatalogoProductos] = useState<ProductoCatalogo[]>([]);
   const [inventarioSucursales, setInventarioSucursales] = useState<StockSucursal[]>([]);
@@ -360,8 +398,8 @@ export default function DashboardPage() {
   const [cantIngreso, setCantIngreso] = useState<string>('10');
   const [minIngreso, setMinIngreso] = useState<string>('3');
   const [maxIngreso, setMaxIngreso] = useState<string>('50');
-  const [sucursalIngreso, setSucursalIngreso] = useState<string>('Matriz Principal');
-  const [almacenIngreso, setAlmacenIngreso] = useState<string>('Almacén Principal');
+  const [sucursalIngreso, setSucursalIngreso] = useState<string>('');
+  const [almacenIngreso, setAlmacenIngreso] = useState<string>('');
   const [motivoIngreso, setMotivoIngreso] = useState<string>('Compra a proveedor / Surtido inicial');
   const [fechaIngresoManual, setFechaIngresoManual] = useState<string>(new Date().toISOString().split('T')[0]);
 
@@ -369,7 +407,7 @@ export default function DashboardPage() {
   const [stockItemSeleccionado, setStockItemSeleccionado] = useState<StockSucursal | null>(null);
   const [tipoMovimientoMod, setTipoMovimientoMod] = useState<MovimientoKardex['tipoMovimiento']>('Transferencia');
   const [cantidadMod, setCantidadMod] = useState<string>('1');
-  const [motivoMod, setMotivoMod] = useState<string>('Traspaso a Sucursal Norte');
+  const [motivoMod, setMotivoMod] = useState<string>('');
 
   // Cámaras
   const [camaraAltaActiva, setCamaraAltaActiva] = useState<boolean>(false);
@@ -392,7 +430,7 @@ export default function DashboardPage() {
   const [modalGastoAbierto, setModalGastoAbierto] = useState<boolean>(false);
 
   const [gCat, setGCat] = useState('Mantenimiento y Refacciones');
-  const [gSuc, setGSuc] = useState('Matriz Principal');
+  const [gSuc, setGSuc] = useState('');
   const [gResp, setGResp] = useState('');
   const [gProv, setGProv] = useState('');
   const [gFecha, setGFecha] = useState(new Date().toISOString().split('T')[0]);
@@ -427,7 +465,7 @@ export default function DashboardPage() {
   const [auditoriaSeleccionadaDetalle, setAuditoriaSeleccionadaDetalle] = useState<AuditoriaInventario | null>(null);
   const [codigoEscaneoAuditoria, setCodigoEscaneoAuditoria] = useState<string>('');
   const [audTipo, setAudTipo] = useState<AuditoriaInventario['tipoAlcance']>('Sucursal');
-  const [audValor, setAudValor] = useState('Matriz Principal');
+  const [audValor, setAudValor] = useState('');
   const [audResp, setAudResp] = useState('');
   const [audObs, setAudObs] = useState('');
 
@@ -437,7 +475,7 @@ export default function DashboardPage() {
   const [sucursalReporte, setSucursalReporte] = useState('Todas');
   const [categoriaReporte, setCategoriaReporte] = useState('Todas');
 
-  const [sucursalActivaPOS, setSucursalActivaPOS] = useState<string>('Matriz Principal');
+  const [sucursalActivaPOS, setSucursalActivaPOS] = useState<string>('');
   const [carrito, setCarrito] = useState<ItemVenta[]>([]);
   const [busquedaTexto, setBusquedaTexto] = useState<string>('');
   const [metodoPagoSeleccionado, setMetodoPagoSeleccionado] = useState<string>('Efectivo');
@@ -489,8 +527,44 @@ export default function DashboardPage() {
   const [nuevoEmailUsr, setNuevoEmailUsr] = useState('');
   const [nuevoPassUsr, setNuevoPassUsr] = useState('');
   const [nuevoRolUsr, setNuevoRolUsr] = useState('Operador / Ventas');
+  const [nuevaSucursalUsrId, setNuevaSucursalUsrId] = useState<string>('');
+  const [usuarioEditando, setUsuarioEditando] = useState<UsuarioSistema | null>(null);
   const [modalUsuarioAbierto, setModalUsuarioAbierto] = useState(false);
 
+  const sucursalesActivas = sucursales.filter((s: Sucursal) => s.estatus === 'Activa');
+  const usuarioEsAdministrador = usuarioLogueado?.rol === 'Administrador';
+  const sucursalAsignadaUsuario = !usuarioEsAdministrador && usuarioLogueado?.sucursalId
+    ? sucursales.find((s: Sucursal) => s.id === usuarioLogueado.sucursalId) || null
+    : null;
+  const nombreSucursalAsignadaUsuario = sucursalAsignadaUsuario?.nombre || '';
+  const sucursalesPermitidasUsuario = usuarioEsAdministrador
+    ? sucursalesActivas
+    : sucursalesActivas.filter((s: Sucursal) => s.id === usuarioLogueado?.sucursalId);
+
+  const puedeOperarSucursal = (nombreSucursal: string) => {
+    if (!usuarioLogueado) return false;
+    if (usuarioEsAdministrador) return true;
+    return nombreSucursal === nombreSucursalAsignadaUsuario;
+  };
+
+  const inventarioVisibleUsuario = usuarioEsAdministrador
+    ? inventarioSucursales
+    : inventarioSucursales.filter((inv: StockSucursal) => inv.sucursal === nombreSucursalAsignadaUsuario);
+  const kardexVisibleUsuario = usuarioEsAdministrador
+    ? kardexMovimientos
+    : kardexMovimientos.filter((mov: MovimientoKardex) => mov.sucursal === nombreSucursalAsignadaUsuario);
+  const gastosVisiblesUsuario = usuarioEsAdministrador
+    ? gastos
+    : gastos.filter((g: GastoOperativo) => g.sucursal === nombreSucursalAsignadaUsuario);
+  const auditoriasVisiblesUsuario = usuarioEsAdministrador
+    ? auditorias
+    : auditorias.filter((a: AuditoriaInventario) => a.tipoAlcance === 'Sucursal' && a.valorAlcance === nombreSucursalAsignadaUsuario);
+  const cotizacionesVisiblesUsuario = usuarioEsAdministrador
+    ? cotizaciones
+    : cotizaciones.filter((c: Cotizacion) => c.sucursal === nombreSucursalAsignadaUsuario);
+  const historialVisibleUsuario = usuarioEsAdministrador
+    ? historialTickets
+    : historialTickets.filter((t: TicketGuardado) => t.sucursal === nombreSucursalAsignadaUsuario);
 
   useEffect(() => {
     let stream: MediaStream | null = null;
@@ -533,6 +607,50 @@ export default function DashboardPage() {
       }
     };
   }, [camaraActiva, camaraAltaActiva, camaraInventarioActiva, camaraAuditoriaActiva]);
+
+  // Mantiene sincronizados los selectores operativos con las sucursales que el usuario tiene autorizadas.
+  useEffect(() => {
+    const activas = sucursales.filter((s: Sucursal) => s.estatus === 'Activa');
+    const disponibles = usuarioLogueado?.rol === 'Administrador'
+      ? activas
+      : activas.filter((s: Sucursal) => s.id === usuarioLogueado?.sucursalId);
+    const primera = disponibles[0];
+
+    if (!primera) {
+      if (sucursalIngreso) setSucursalIngreso('');
+      if (almacenIngreso) setAlmacenIngreso('');
+      if (gSuc) setGSuc('');
+      if (sucursalActivaPOS) setSucursalActivaPOS('');
+      if (audValor) setAudValor('');
+      if (sucursalReporte !== 'Todas') setSucursalReporte('Todas');
+      return;
+    }
+
+    if (!sucursalIngreso || !disponibles.some(s => s.nombre === sucursalIngreso)) {
+      setSucursalIngreso(primera.nombre);
+      setAlmacenIngreso(primera.almacenPrincipal);
+    }
+    if (!gSuc || !disponibles.some(s => s.nombre === gSuc)) {
+      setGSuc(primera.nombre);
+    }
+    if (!sucursalActivaPOS || !disponibles.some(s => s.nombre === sucursalActivaPOS)) {
+      setSucursalActivaPOS(primera.nombre);
+      setCarrito([]);
+    }
+
+    if (usuarioLogueado?.rol !== 'Administrador') {
+      if (audTipo !== 'Sucursal') setAudTipo('Sucursal');
+      if (audValor !== primera.nombre) setAudValor(primera.nombre);
+      if (sucursalReporte !== primera.nombre) setSucursalReporte(primera.nombre);
+    } else {
+      if (audTipo === 'Sucursal' && (!audValor || !disponibles.some(s => s.nombre === audValor))) {
+        setAudValor(primera.nombre);
+      }
+      if (sucursalReporte !== 'Todas' && !sucursales.some(s => s.nombre === sucursalReporte)) {
+        setSucursalReporte('Todas');
+      }
+    }
+  }, [sucursales, audTipo, usuarioLogueado?.id, usuarioLogueado?.rol, usuarioLogueado?.sucursalId]);
 
   const formatearMoneda = (valor: number) => {
     return `$${valor.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MXN`;
@@ -629,6 +747,162 @@ export default function DashboardPage() {
     setModalClienteAbierto(true);
   };
 
+  const limpiarFormularioSucursal = () => {
+    setSucursalEditando(null);
+    setSClave('');
+    setSNombre('');
+    setSTipo('Sucursal');
+    setSDireccion('');
+    setSEstado('');
+    setSMunicipio('');
+    setSCodigoPostal('');
+    setSTelefono('');
+    setSResponsable('');
+    setSCorreo('');
+    setSAlmacenPrincipal('');
+    setSEstatus('Activa');
+  };
+
+  const abrirNuevaSucursal = () => {
+    limpiarFormularioSucursal();
+    setModalSucursalAbierto(true);
+  };
+
+  const sucursalTieneMovimientos = (nombreSucursal: string) => {
+    return (
+      inventarioSucursales.some(inv => inv.sucursal === nombreSucursal) ||
+      kardexMovimientos.some(k => k.sucursal === nombreSucursal) ||
+      gastos.some(g => g.sucursal === nombreSucursal) ||
+      cotizaciones.some(c => c.sucursal === nombreSucursal) ||
+      historialTickets.some(t => t.items.some(item => item.sucursal === nombreSucursal))
+    );
+  };
+
+  const abrirEdicionSucursal = (sucursal: Sucursal) => {
+    setSucursalEditando(sucursal);
+    setSClave(sucursal.clave);
+    setSNombre(sucursal.nombre);
+    setSTipo(sucursal.tipo);
+    setSDireccion(sucursal.direccion);
+    setSEstado(sucursal.estado);
+    setSMunicipio(sucursal.municipio);
+    setSCodigoPostal(sucursal.codigoPostal);
+    setSTelefono(sucursal.telefono);
+    setSResponsable(sucursal.responsable);
+    setSCorreo(sucursal.correo);
+    setSAlmacenPrincipal(sucursal.almacenPrincipal);
+    setSEstatus(sucursal.estatus);
+    setModalSucursalAbierto(true);
+  };
+
+  const guardarSucursal = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    const claveLimpia = sClave.trim().toUpperCase();
+    const nombreLimpio = sNombre.trim();
+    const almacenLimpio = sAlmacenPrincipal.trim();
+
+    if (!claveLimpia || !nombreLimpio || !almacenLimpio) {
+      setMensajeNotif('Clave, nombre de sucursal y almacén principal son obligatorios.');
+      setModalNotifAbierto(true);
+      return;
+    }
+
+    const claveDuplicada = sucursales.some(
+      s => s.clave.toUpperCase() === claveLimpia && s.id !== sucursalEditando?.id
+    );
+    if (claveDuplicada) {
+      setMensajeNotif(`Ya existe una sucursal con la clave "${claveLimpia}".`);
+      setModalNotifAbierto(true);
+      return;
+    }
+
+    const nombreDuplicado = sucursales.some(
+      s => s.nombre.toLowerCase() === nombreLimpio.toLowerCase() && s.id !== sucursalEditando?.id
+    );
+    if (nombreDuplicado) {
+      setMensajeNotif(`Ya existe una sucursal con el nombre "${nombreLimpio}".`);
+      setModalNotifAbierto(true);
+      return;
+    }
+
+    if (sucursalEditando) {
+      const nombreAnterior = sucursalEditando.nombre;
+      if (nombreAnterior !== nombreLimpio && sucursalTieneMovimientos(nombreAnterior)) {
+        setMensajeNotif('No se puede cambiar el nombre de una sucursal que ya tiene inventario, ventas, gastos o movimientos. Puede editar sus demás datos o inactivarla.');
+        setModalNotifAbierto(true);
+        return;
+      }
+
+      const actualizada: Sucursal = {
+        ...sucursalEditando,
+        clave: claveLimpia,
+        nombre: nombreLimpio,
+        tipo: sTipo,
+        direccion: sDireccion.trim(),
+        estado: sEstado.trim(),
+        municipio: sMunicipio.trim(),
+        codigoPostal: sCodigoPostal.trim(),
+        telefono: sTelefono.trim(),
+        responsable: sResponsable.trim(),
+        correo: sCorreo.trim(),
+        almacenPrincipal: almacenLimpio,
+        estatus: sEstatus
+      };
+
+      setSucursales(prev => prev.map(s => s.id === actualizada.id ? actualizada : s));
+
+      if (nombreAnterior !== nombreLimpio) {
+        if (sucursalIngreso === nombreAnterior) setSucursalIngreso(nombreLimpio);
+        if (gSuc === nombreAnterior) setGSuc(nombreLimpio);
+        if (sucursalActivaPOS === nombreAnterior) setSucursalActivaPOS(nombreLimpio);
+        if (audValor === nombreAnterior) setAudValor(nombreLimpio);
+        if (sucursalReporte === nombreAnterior) setSucursalReporte(nombreLimpio);
+      }
+
+      if (sucursalIngreso === nombreLimpio) {
+        setAlmacenIngreso(almacenLimpio);
+      }
+
+      setMensajeNotif(`Sucursal "${nombreLimpio}" actualizada con éxito.`);
+    } else {
+      const nuevaSucursal: Sucursal = {
+        id: Date.now(),
+        clave: claveLimpia,
+        nombre: nombreLimpio,
+        tipo: sTipo,
+        direccion: sDireccion.trim(),
+        estado: sEstado.trim(),
+        municipio: sMunicipio.trim(),
+        codigoPostal: sCodigoPostal.trim(),
+        telefono: sTelefono.trim(),
+        responsable: sResponsable.trim(),
+        correo: sCorreo.trim(),
+        almacenPrincipal: almacenLimpio,
+        estatus: sEstatus,
+        fechaAlta: new Date().toISOString().split('T')[0]
+      };
+
+      setSucursales(prev => [nuevaSucursal, ...prev]);
+      setMensajeNotif(`Sucursal "${nombreLimpio}" registrada con éxito.`);
+    }
+
+    setModalSucursalAbierto(false);
+    limpiarFormularioSucursal();
+    setModalNotifAbierto(true);
+  };
+
+  const cambiarEstatusSucursal = (sucursal: Sucursal) => {
+    const nuevoEstatus: Sucursal['estatus'] = sucursal.estatus === 'Activa' ? 'Inactiva' : 'Activa';
+    setSucursales(prev => prev.map(s => s.id === sucursal.id ? { ...s, estatus: nuevoEstatus } : s));
+    setMensajeNotif(
+      nuevoEstatus === 'Activa'
+        ? `Sucursal "${sucursal.nombre}" activada. Ya puede utilizarse en la operación.`
+        : `Sucursal "${sucursal.nombre}" inactivada. Su historial se conserva, pero ya no aparecerá para nuevas operaciones.`
+    );
+    setModalNotifAbierto(true);
+  };
+
   const registrarMovimientoKardex = (
     prodNombre: string,
     suc: string,
@@ -664,6 +938,16 @@ export default function DashboardPage() {
   const procesarIngresoInventario = (e: React.FormEvent) => {
     e.preventDefault();
     if (!productoIngreso) return;
+    if (!sucursalIngreso) {
+      setMensajeNotif('Primero debe registrar y activar una sucursal para ingresar inventario.');
+      setModalNotifAbierto(true);
+      return;
+    }
+    if (!puedeOperarSucursal(sucursalIngreso)) {
+      setMensajeNotif('No tiene permiso para registrar inventario en otra sucursal.');
+      setModalNotifAbierto(true);
+      return;
+    }
     const cant = Number(cantIngreso) || 0;
     const min = Number(minIngreso) || 3;
     const max = Number(maxIngreso) || 50;
@@ -711,6 +995,11 @@ export default function DashboardPage() {
   const procesarModificacionStock = (e: React.FormEvent) => {
     e.preventDefault();
     if (!stockItemSeleccionado) return;
+    if (!puedeOperarSucursal(stockItemSeleccionado.sucursal)) {
+      setMensajeNotif('No tiene permiso para modificar inventario de otra sucursal.');
+      setModalNotifAbierto(true);
+      return;
+    }
     const cant = Number(cantidadMod) || 0;
     if (cant <= 0) return;
 
@@ -757,8 +1046,23 @@ export default function DashboardPage() {
 
   const registrarAuditoria = (e: React.FormEvent) => {
     e.preventDefault();
+
+    const tipoAuditoriaAplicado: AuditoriaInventario['tipoAlcance'] = usuarioEsAdministrador ? audTipo : 'Sucursal';
+    const valorAuditoriaAplicado = usuarioEsAdministrador ? audValor : nombreSucursalAsignadaUsuario;
+
+    if (tipoAuditoriaAplicado === 'Sucursal' && !valorAuditoriaAplicado) {
+      setMensajeNotif('Seleccione una sucursal activa antes de iniciar la auditoría.');
+      setModalNotifAbierto(true);
+      return;
+    }
+    if (tipoAuditoriaAplicado === 'Sucursal' && !puedeOperarSucursal(valorAuditoriaAplicado)) {
+      setMensajeNotif('No tiene permiso para auditar otra sucursal.');
+      setModalNotifAbierto(true);
+      return;
+    }
+
     const itemsAuditoria: AuditoriaItem[] = catalogoProductos.map(prod => {
-      const stockRef = obtenerStockSucursal(prod.id, audValor);
+      const stockRef = obtenerStockSucursal(prod.id, valorAuditoriaAplicado);
       return {
         productoId: prod.id,
         codigo: prod.codigo,
@@ -774,8 +1078,8 @@ export default function DashboardPage() {
     const nuevaAud: AuditoriaInventario = {
       id: Date.now(),
       folio: `AUD-${Math.floor(1000 + Math.random() * 9000)}`,
-      tipoAlcance: audTipo,
-      valorAlcance: audValor,
+      tipoAlcance: tipoAuditoriaAplicado,
+      valorAlcance: valorAuditoriaAplicado,
       responsable: audResp,
       fechaAuditoria: new Date().toISOString().split('T')[0],
       estadoBloqueo: true,
@@ -790,6 +1094,7 @@ export default function DashboardPage() {
     setMensajeNotif(`¡Auditoría ${nuevaAud.folio} programada! El conteo físico inicia en 0 para cálculo de diferencias reales.`);
     setModalNotifAbierto(true);
   };
+
 
   const escanearProductoAuditoria = (e: React.FormEvent) => {
     e.preventDefault();
@@ -849,6 +1154,11 @@ export default function DashboardPage() {
   const autorizarAjusteAuditoria = (audId: number) => {
     const audRef = auditorias.find(a => a.id === audId);
     if (!audRef) return;
+    if (audRef.tipoAlcance === 'Sucursal' && !puedeOperarSucursal(audRef.valorAlcance)) {
+      setMensajeNotif('No tiene permiso para aplicar ajustes de otra sucursal.');
+      setModalNotifAbierto(true);
+      return;
+    }
 
     setInventarioSucursales(prevInv => {
       return prevInv.map(inv => {
@@ -885,6 +1195,16 @@ export default function DashboardPage() {
   const registrarGastoOperativo = (e: React.FormEvent) => {
     e.preventDefault();
     if (!gImporte) return;
+    if (!gSuc) {
+      setMensajeNotif('Seleccione una sucursal activa para registrar el gasto.');
+      setModalNotifAbierto(true);
+      return;
+    }
+    if (!puedeOperarSucursal(gSuc)) {
+      setMensajeNotif('No tiene permiso para registrar gastos en otra sucursal.');
+      setModalNotifAbierto(true);
+      return;
+    }
 
     const importeNum = Number(gImporte) || 0;
     const ivaCalc = importeNum * 0.16;
@@ -1328,8 +1648,8 @@ export default function DashboardPage() {
           categoria: 'Paquetes / Combos',
           precio: precioProporcional,
           costo: precioProporcional * 0.6,
-          stock: 10,
-          sucursal: 'Matriz Principal',
+          stock: stockDisp,
+          sucursal: sucursalActivaPOS,
           numeroSerie: serieComp,
           cantidadVendida: 1,
           esRegalo: false,
@@ -1411,6 +1731,16 @@ export default function DashboardPage() {
 
   const generarCotizacion = () => {
     if (carrito.length === 0) return;
+    if (!sucursalActivaPOS) {
+      setMensajeNotif('Seleccione una sucursal activa antes de generar la cotización.');
+      setModalNotifAbierto(true);
+      return;
+    }
+    if (!puedeOperarSucursal(sucursalActivaPOS)) {
+      setMensajeNotif('No tiene permiso para generar cotizaciones en otra sucursal.');
+      setModalNotifAbierto(true);
+      return;
+    }
     const { total } = calcularTotal();
 
     const ahora = new Date();
@@ -1446,12 +1776,18 @@ export default function DashboardPage() {
 
   const autorizarCotizacion = (cot: Cotizacion) => {
     if (cot.estatus !== 'Pendiente') return;
+    if (!puedeOperarSucursal(cot.sucursal)) {
+      setMensajeNotif('No tiene permiso para autorizar cotizaciones de otra sucursal.');
+      setModalNotifAbierto(true);
+      return;
+    }
 
     const ticketInfo: TicketGuardado = {
       folio: `TICK-${cot.folio.replace('COT-', '')}`,
       fecha: new Date().toLocaleString(),
       cliente: cot.cliente,
       metodoPago: 'Efectivo (Cotización Autorizada)',
+      sucursal: cot.sucursal,
       items: cot.items,
       subtotalBruto: cot.total / 1.16,
       descuentoTotal: 0,
@@ -1472,6 +1808,11 @@ export default function DashboardPage() {
 
   const expirarCotizacion = (cot: Cotizacion) => {
     if (cot.estatus !== 'Pendiente') return;
+    if (!puedeOperarSucursal(cot.sucursal)) {
+      setMensajeNotif('No tiene permiso para modificar cotizaciones de otra sucursal.');
+      setModalNotifAbierto(true);
+      return;
+    }
 
     setInventarioSucursales((prevInv: StockSucursal[]) =>
       prevInv.map((inv: StockSucursal) => {
@@ -1490,6 +1831,16 @@ export default function DashboardPage() {
 
   const procesarVenta = () => {
     if (carrito.length === 0) return;
+    if (!sucursalActivaPOS) {
+      setMensajeNotif('Seleccione una sucursal activa antes de cobrar la venta.');
+      setModalNotifAbierto(true);
+      return;
+    }
+    if (!puedeOperarSucursal(sucursalActivaPOS)) {
+      setMensajeNotif('No tiene permiso para cobrar ventas en otra sucursal.');
+      setModalNotifAbierto(true);
+      return;
+    }
     const { subtotalBruto, descuentoTotal, subtotalNeto, iva, total } = calcularTotal();
     
     const clienteObj = clientes.find(c => c.nombreComercial === clienteSeleccionadoPOS);
@@ -1565,6 +1916,7 @@ export default function DashboardPage() {
       fecha: new Date().toLocaleString(),
       cliente: clienteSeleccionadoPOS,
       metodoPago: metodoPagoSeleccionado,
+      sucursal: sucursalActivaPOS,
       items: [...carrito],
       subtotalBruto,
       descuentoTotal,
@@ -1655,7 +2007,7 @@ export default function DashboardPage() {
   };
 
   const ahora = new Date();
-  const ventasDelDia = historialTickets
+  const ventasDelDia = historialVisibleUsuario
     .filter((ticket: TicketGuardado) => {
       const fechaTicket = convertirFechaTicket(ticket.fecha);
       return fechaTicket &&
@@ -1665,7 +2017,7 @@ export default function DashboardPage() {
     })
     .reduce((acc: number, ticket: TicketGuardado) => acc + ticket.total, 0);
 
-  const ventasDelMes = historialTickets
+  const ventasDelMes = historialVisibleUsuario
     .filter((ticket: TicketGuardado) => {
       const fechaTicket = convertirFechaTicket(ticket.fecha);
       return fechaTicket &&
@@ -1675,7 +2027,7 @@ export default function DashboardPage() {
     .reduce((acc: number, ticket: TicketGuardado) => acc + ticket.total, 0);
 
   const mapaProductosVendidos = new Map<string, { nombre: string; cat: string; qty: number; total: number }>();
-  historialTickets.forEach((ticket: TicketGuardado) => {
+  historialVisibleUsuario.forEach((ticket: TicketGuardado) => {
     ticket.items.forEach((item: ItemVenta) => {
       if (item.esRegalo) return;
       const actual = mapaProductosVendidos.get(item.nombre) || {
@@ -1695,7 +2047,7 @@ export default function DashboardPage() {
       .slice(0, 5);
 
   const mapaMejoresClientes = new Map<string, { cliente: string; compras: number; total: number }>();
-  historialTickets.forEach((ticket: TicketGuardado) => {
+  historialVisibleUsuario.forEach((ticket: TicketGuardado) => {
     const nombreCliente = ticket.cliente || 'Público General';
     const actual = mapaMejoresClientes.get(nombreCliente) || {
       cliente: nombreCliente,
@@ -1713,12 +2065,15 @@ export default function DashboardPage() {
 
   const inicioReporte = fechaInicioReporte ? new Date(`${fechaInicioReporte}T00:00:00`) : null;
   const finReporte = fechaFinReporte ? new Date(`${fechaFinReporte}T23:59:59`) : null;
+  const sucursalReporteEfectiva = usuarioEsAdministrador ? sucursalReporte : nombreSucursalAsignadaUsuario;
 
   const ticketsPeriodoReporte = historialTickets.filter((ticket: TicketGuardado) => {
     const fechaTicket = convertirFechaTicket(ticket.fecha);
     if (!fechaTicket) return false;
     if (inicioReporte && fechaTicket < inicioReporte) return false;
     if (finReporte && fechaTicket > finReporte) return false;
+    if (sucursalReporteEfectiva !== 'Todas' && ticket.sucursal !== sucursalReporteEfectiva) return false;
+    if (categoriaReporte !== 'Todas' && !ticket.items.some(item => item.categoria === categoriaReporte)) return false;
     return true;
   });
 
@@ -1740,13 +2095,14 @@ export default function DashboardPage() {
       const fechaGasto = new Date(`${gasto.fecha}T12:00:00`);
       if (inicioReporte && fechaGasto < inicioReporte) return false;
       if (finReporte && fechaGasto > finReporte) return false;
+      if (sucursalReporteEfectiva !== 'Todas' && gasto.sucursal !== sucursalReporteEfectiva) return false;
       return true;
     })
     .reduce((acc: number, gasto: GastoOperativo) => acc + gasto.total, 0);
   const utilidadNetaPeriodo = ventasPeriodoReporte - costoVentasPeriodo - gastosPeriodoReporte;
 
   const exportarExcelReporte = () => {
-    const contenidoCSV = `Reporte Financiero (Del ${fechaInicioReporte} al ${fechaFinReporte})\nSucursal,Ventas Periodo,Gastos Op.,Efectivo Caja,Bancos,Utilidad Neta\n${sucursalReporte}, ${ventasPeriodoReporte.toFixed(2)}, ${gastosPeriodoReporte.toFixed(2)}, ${efectivoPeriodoReporte.toFixed(2)}, ${bancosPeriodoReporte.toFixed(2)}, ${utilidadNetaPeriodo.toFixed(2)}`;
+    const contenidoCSV = `Reporte Financiero (Del ${fechaInicioReporte} al ${fechaFinReporte})\nSucursal,Ventas Periodo,Gastos Op.,Efectivo Caja,Bancos,Utilidad Neta\n${sucursalReporteEfectiva}, ${ventasPeriodoReporte.toFixed(2)}, ${gastosPeriodoReporte.toFixed(2)}, ${efectivoPeriodoReporte.toFixed(2)}, ${bancosPeriodoReporte.toFixed(2)}, ${utilidadNetaPeriodo.toFixed(2)}`;
     const blob = new Blob([contenidoCSV], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -1764,6 +2120,90 @@ export default function DashboardPage() {
     setMensajeNotif('Generando documento PDF ejecutivo para Dirección y Administración...');
     setModalNotifAbierto(true);
     window.print();
+  };
+
+  const limpiarFormularioUsuario = () => {
+    setUsuarioEditando(null);
+    setNuevoNombreUsr('');
+    setNuevoEmailUsr('');
+    setNuevoPassUsr('');
+    setNuevoRolUsr('Operador / Ventas');
+    setNuevaSucursalUsrId('');
+  };
+
+  const abrirNuevoUsuario = () => {
+    limpiarFormularioUsuario();
+    setModalUsuarioAbierto(true);
+  };
+
+  const abrirEditarUsuario = (usuario: UsuarioSistema) => {
+    setUsuarioEditando(usuario);
+    setNuevoNombreUsr(usuario.nombre);
+    setNuevoEmailUsr(usuario.email);
+    setNuevoPassUsr(usuario.password);
+    setNuevoRolUsr(usuario.rol);
+    setNuevaSucursalUsrId(usuario.sucursalId ? String(usuario.sucursalId) : '');
+    setModalUsuarioAbierto(true);
+  };
+
+  const guardarUsuarioSistema = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!nuevoNombreUsr.trim() || !nuevoEmailUsr.trim() || !nuevoPassUsr.trim()) return;
+
+    const rolAdministrador = nuevoRolUsr === 'Administrador';
+    const sucursalIdSeleccionada = rolAdministrador ? null : Number(nuevaSucursalUsrId);
+
+    if (!rolAdministrador) {
+      if (!sucursalIdSeleccionada) {
+        setMensajeNotif('Debe asignar una sucursal activa a este usuario.');
+        setModalNotifAbierto(true);
+        return;
+      }
+      const sucursalValida = sucursalesActivas.find(s => s.id === sucursalIdSeleccionada);
+      if (!sucursalValida) {
+        setMensajeNotif('La sucursal seleccionada no está activa.');
+        setModalNotifAbierto(true);
+        return;
+      }
+    }
+
+    const correoNormalizado = nuevoEmailUsr.trim().toLowerCase();
+    const correoDuplicado = usuariosSistema.some(u =>
+      u.email.toLowerCase() === correoNormalizado && u.id !== usuarioEditando?.id
+    );
+    if (correoDuplicado) {
+      setMensajeNotif('Ya existe un usuario registrado con ese correo electrónico.');
+      setModalNotifAbierto(true);
+      return;
+    }
+
+    if (usuarioEditando) {
+      setUsuariosSistema(prev => prev.map(u => u.id === usuarioEditando.id ? {
+        ...u,
+        nombre: nuevoNombreUsr.trim(),
+        email: correoNormalizado,
+        password: nuevoPassUsr,
+        rol: nuevoRolUsr,
+        sucursalId: sucursalIdSeleccionada
+      } : u));
+      setMensajeNotif('¡Usuario actualizado con éxito!');
+    } else {
+      const nuevo: UsuarioSistema = {
+        id: Date.now(),
+        nombre: nuevoNombreUsr.trim(),
+        email: correoNormalizado,
+        password: nuevoPassUsr,
+        rol: nuevoRolUsr,
+        sucursalId: sucursalIdSeleccionada,
+        activo: true
+      };
+      setUsuariosSistema(prev => [...prev, nuevo]);
+      setMensajeNotif('¡Usuario registrado con éxito!');
+    }
+
+    setModalUsuarioAbierto(false);
+    limpiarFormularioUsuario();
+    setModalNotifAbierto(true);
   };
 
   // Verificación de permisos por rol basado en el usuario logueado
@@ -1795,8 +2235,30 @@ export default function DashboardPage() {
                   alert('Este usuario se encuentra inactivo.');
                   return;
                 }
+
+                if (usr.rol !== 'Administrador') {
+                  const sucursalUsr = sucursales.find(s => s.id === usr.sucursalId);
+                  if (!sucursalUsr || sucursalUsr.estatus !== 'Activa') {
+                    alert('Este usuario no tiene una sucursal activa asignada. Solicite al administrador que actualice su acceso.');
+                    return;
+                  }
+                  setSucursalActivaPOS(sucursalUsr.nombre);
+                  setSucursalIngreso(sucursalUsr.nombre);
+                  setAlmacenIngreso(sucursalUsr.almacenPrincipal);
+                  setGSuc(sucursalUsr.nombre);
+                  setAudTipo('Sucursal');
+                  setAudValor(sucursalUsr.nombre);
+                  setSucursalReporte(sucursalUsr.nombre);
+                }
+
                 setUsuarioLogueado(usr);
-                setModuloActivo(verificarPermisoModulo('inicio') ? 'inicio' : 'ventas');
+                const rolRefLogin = rolesSistema.find(r => r.nombreRol === usr.rol);
+                const primerModulo = usr.rol === 'Administrador'
+                  ? 'inicio'
+                  : (rolRefLogin?.modulosPermitidos.includes('inicio')
+                      ? 'inicio'
+                      : rolRefLogin?.modulosPermitidos[0] || 'ventas');
+                setModuloActivo(primerModulo);
               } else {
                 alert('Credenciales incorrectas. Verifique su correo y contraseña.');
               }
@@ -1879,6 +2341,9 @@ export default function DashboardPage() {
             <div>
               <h1 className="text-xl font-black text-blue-400 tracking-wider">JF EQUIPOS</h1>
               <p className="text-xs text-slate-500 mt-1">Rol: <span className="text-amber-400 font-bold">{usuarioLogueado.rol}</span></p>
+              <p className="text-[10px] text-slate-500 mt-1">
+                Sucursal: <span className="text-emerald-400 font-bold">{usuarioEsAdministrador ? 'Todas' : (nombreSucursalAsignadaUsuario || 'Sin asignar')}</span>
+              </p>
             </div>
           </div>
           <nav className="p-4 space-y-1.5 overflow-y-auto max-h-[calc(100vh-140px)]">
@@ -1890,6 +2355,9 @@ export default function DashboardPage() {
             )}
             {verificarPermisoModulo('inventario') && (
               <button type="button" onClick={() => setModuloActivo('inventario')} className={`w-full text-left px-4 py-2.5 rounded-xl font-medium text-xs cursor-pointer ${moduloActivo === 'inventario' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}>📦 Inventario / Kardex</button>
+            )}
+            {verificarPermisoModulo('sucursales') && (
+              <button type="button" onClick={() => setModuloActivo('sucursales')} className={`w-full text-left px-4 py-2.5 rounded-xl font-medium text-xs cursor-pointer ${moduloActivo === 'sucursales' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}>🏢 Sucursales</button>
             )}
             {verificarPermisoModulo('clientes') && (
               <button type="button" onClick={() => setModuloActivo('clientes')} className={`w-full text-left px-4 py-2.5 rounded-xl font-medium text-xs cursor-pointer ${moduloActivo === 'clientes' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}>👥 Clientes</button>
@@ -1938,7 +2406,7 @@ export default function DashboardPage() {
       <main className="flex-1 flex flex-col min-w-0">
         <header className="h-16 bg-slate-900/50 border-b border-slate-800 px-8 flex items-center justify-between">
           <h2 className="text-lg font-bold text-white capitalize">
-            Módulo: {moduloActivo === 'inicio' ? 'Panel General' : moduloActivo === 'cxc' ? 'Cuentas por Cobrar (CxC)' : moduloActivo === 'cxp' ? 'Cuentas por Pagar' : moduloActivo === 'gastos' ? 'Gastos Operativos' : moduloActivo === 'reportes' ? 'Reportes Financieros' : moduloActivo === 'auditoria' ? 'Auditoría de Inventarios' : moduloActivo === 'inventario' ? 'Inventario y Kardex' : moduloActivo === 'usuarios' ? 'Gestión de Usuarios y Roles' : moduloActivo}
+            Módulo: {moduloActivo === 'inicio' ? 'Panel General' : moduloActivo === 'cxc' ? 'Cuentas por Cobrar (CxC)' : moduloActivo === 'cxp' ? 'Cuentas por Pagar' : moduloActivo === 'gastos' ? 'Gastos Operativos' : moduloActivo === 'reportes' ? 'Reportes Financieros' : moduloActivo === 'auditoria' ? 'Auditoría de Inventarios' : moduloActivo === 'inventario' ? 'Inventario y Kardex' : moduloActivo === 'sucursales' ? 'Administración de Sucursales' : moduloActivo === 'usuarios' ? 'Gestión de Usuarios y Roles' : moduloActivo}
           </h2>
           <span className="text-xs bg-emerald-950 text-emerald-400 border border-emerald-800 px-3 py-1 rounded-full font-medium">Pesos Mexicanos (MXN) (.00)</span>
         </header>
@@ -1956,18 +2424,33 @@ export default function DashboardPage() {
                   <p className="text-xs font-semibold text-slate-400 uppercase">Ventas del Mes</p>
                   <h3 className="text-2xl font-black text-blue-400 mt-2">{formatearMoneda(ventasDelMes)}</h3>
                 </div>
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-                  <p className="text-xs font-semibold text-slate-400 uppercase">Cuentas por Pagar</p>
-                  <h3 className="text-2xl font-black text-amber-400 mt-2">
-                    {formatearMoneda(cuentasPorPagar.reduce((acc, c) => acc + c.saldoPendiente, 0))}
-                  </h3>
-                </div>
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-                  <p className="text-xs font-semibold text-slate-400 uppercase">Vencimientos Próximos</p>
-                  <h3 className="text-2xl font-black text-red-400 mt-2">
-                    {cuentasPorPagar.filter(c => new Date(c.fechaVencimiento) < new Date()).length} Facturas
-                  </h3>
-                </div>
+                {usuarioEsAdministrador ? (
+                  <>
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                      <p className="text-xs font-semibold text-slate-400 uppercase">Cuentas por Pagar</p>
+                      <h3 className="text-2xl font-black text-amber-400 mt-2">
+                        {formatearMoneda(cuentasPorPagar.reduce((acc, c) => acc + c.saldoPendiente, 0))}
+                      </h3>
+                    </div>
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                      <p className="text-xs font-semibold text-slate-400 uppercase">Vencimientos Próximos</p>
+                      <h3 className="text-2xl font-black text-red-400 mt-2">
+                        {cuentasPorPagar.filter(c => new Date(c.fechaVencimiento) < new Date()).length} Facturas
+                      </h3>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                      <p className="text-xs font-semibold text-slate-400 uppercase">Sucursal Asignada</p>
+                      <h3 className="text-lg font-black text-emerald-400 mt-2">{nombreSucursalAsignadaUsuario || 'Sin asignar'}</h3>
+                    </div>
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                      <p className="text-xs font-semibold text-slate-400 uppercase">Tickets Registrados</p>
+                      <h3 className="text-2xl font-black text-purple-400 mt-2">{historialVisibleUsuario.length}</h3>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -2012,46 +2495,207 @@ export default function DashboardPage() {
             </div>
           )}
 
+          {/* MÓDULO DE ADMINISTRACIÓN DE SUCURSALES */}
+          {moduloActivo === 'sucursales' && verificarPermisoModulo('sucursales') && (
+            <div className="space-y-6">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div>
+                  <h3 className="text-xl font-bold text-white">Administración de Sucursales</h3>
+                  <p className="text-slate-400 text-sm mt-1">
+                    Registre las sucursales reales de JF Equipos. Las sucursales activas se utilizan automáticamente en Inventario, Ventas, Gastos, Auditorías y Reportes.
+                  </p>
+                </div>
+                <button type="button" onClick={abrirNuevaSucursal} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-xl shadow-lg text-xs cursor-pointer">
+                  + Registrar Nueva Sucursal
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+                  <p className="text-[11px] font-semibold text-slate-400 uppercase">Sucursales Registradas</p>
+                  <h4 className="text-2xl font-black text-blue-400 mt-1">{sucursales.length}</h4>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+                  <p className="text-[11px] font-semibold text-slate-400 uppercase">Sucursales Activas</p>
+                  <h4 className="text-2xl font-black text-emerald-400 mt-1">{sucursalesActivas.length}</h4>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+                  <p className="text-[11px] font-semibold text-slate-400 uppercase">Sucursales Inactivas</p>
+                  <h4 className="text-2xl font-black text-amber-400 mt-1">{sucursales.filter(s => s.estatus === 'Inactiva').length}</h4>
+                </div>
+              </div>
+
+              {sucursales.length === 0 ? (
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center space-y-3">
+                  <div className="text-4xl">🏢</div>
+                  <h4 className="text-white font-bold">Todavía no hay sucursales registradas</h4>
+                  <p className="text-slate-500 text-xs max-w-xl mx-auto">
+                    Registre primero la matriz o sucursal principal. Después aparecerá automáticamente como opción en los módulos operativos.
+                  </p>
+                  <button type="button" onClick={abrirNuevaSucursal} className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-5 py-2 rounded-xl text-xs cursor-pointer">
+                    Registrar Primera Sucursal
+                  </button>
+                </div>
+              ) : (
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-800 text-slate-400 uppercase bg-slate-950/60">
+                          <th className="p-4">Clave</th>
+                          <th className="p-4">Sucursal</th>
+                          <th className="p-4">Ubicación</th>
+                          <th className="p-4">Responsable / Contacto</th>
+                          <th className="p-4">Almacén Principal</th>
+                          <th className="p-4 text-center">Estatus</th>
+                          <th className="p-4 text-center">Acciones</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {sucursales.map((sucursal: Sucursal) => (
+                          <tr key={sucursal.id} className="hover:bg-slate-800/40">
+                            <td className="p-4 font-mono text-blue-400 font-bold">{sucursal.clave}</td>
+                            <td className="p-4">
+                              <strong className="text-white block">{sucursal.nombre}</strong>
+                              <span className="text-[10px] text-slate-400">{sucursal.tipo} · Alta: {sucursal.fechaAlta}</span>
+                            </td>
+                            <td className="p-4 text-slate-300">
+                              <span className="block">{sucursal.direccion || 'Sin dirección capturada'}</span>
+                              <span className="text-[10px] text-slate-500">{[sucursal.municipio, sucursal.estado, sucursal.codigoPostal].filter(Boolean).join(', ') || 'Ubicación pendiente'}</span>
+                            </td>
+                            <td className="p-4 text-slate-300">
+                              <strong className="text-white block">{sucursal.responsable || 'Sin responsable'}</strong>
+                              <span className="text-[10px] block">{sucursal.telefono || 'Sin teléfono'}</span>
+                              <span className="text-[10px] text-blue-400">{sucursal.correo || 'Sin correo'}</span>
+                            </td>
+                            <td className="p-4 text-amber-400 font-semibold">{sucursal.almacenPrincipal}</td>
+                            <td className="p-4 text-center">
+                              <span className={`px-2.5 py-1 rounded-full font-bold text-[10px] ${sucursal.estatus === 'Activa' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-red-950 text-red-400 border border-red-800'}`}>{sucursal.estatus}</span>
+                            </td>
+                            <td className="p-4">
+                              <div className="flex flex-wrap justify-center gap-2">
+                                <button type="button" onClick={() => abrirEdicionSucursal(sucursal)} className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 py-1.5 rounded-lg cursor-pointer">✏️ Editar</button>
+                                <button type="button" onClick={() => cambiarEstatusSucursal(sucursal)} className={`font-bold px-3 py-1.5 rounded-lg cursor-pointer ${sucursal.estatus === 'Activa' ? 'bg-amber-700 hover:bg-amber-600 text-white' : 'bg-emerald-700 hover:bg-emerald-600 text-white'}`}>
+                                  {sucursal.estatus === 'Activa' ? '⏸ Inactivar' : '▶ Activar'}
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {modalSucursalAbierto && (
+                <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+                  <div className="bg-slate-900 border border-blue-500/60 rounded-2xl p-6 max-w-3xl w-full shadow-2xl max-h-[90vh] overflow-y-auto space-y-4">
+                    <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+                      <div>
+                        <h3 className="text-lg font-bold text-blue-400">{sucursalEditando ? '✏️ Editar Sucursal' : '🏢 Registrar Nueva Sucursal'}</h3>
+                        <p className="text-[10px] text-slate-500 mt-1">Los campos marcados con * son obligatorios.</p>
+                      </div>
+                      <button type="button" onClick={() => { setModalSucursalAbierto(false); limpiarFormularioSucursal(); }} className="text-red-400 font-bold text-xs bg-red-950/40 px-3 py-1 rounded-lg border border-red-800 cursor-pointer">✕ Cerrar</button>
+                    </div>
+
+                    {sucursalEditando && sucursalTieneMovimientos(sucursalEditando.nombre) && (
+                      <div className="bg-amber-950/40 border border-amber-800 rounded-xl p-3 text-xs text-amber-300">
+                        Esta sucursal ya tiene historial operativo. Su nombre queda protegido para conservar la trazabilidad de inventario, ventas y movimientos.
+                      </div>
+                    )}
+
+                    <form onSubmit={guardarSucursal} className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                      <div>
+                        <label className="block text-slate-400 mb-1">Clave de Sucursal *</label>
+                        <input type="text" value={sClave} onChange={(e) => setSClave(e.target.value.toUpperCase())} placeholder="Ej. SUC-001" required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono uppercase" />
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Tipo *</label>
+                        <select value={sTipo} onChange={(e) => setSTipo(e.target.value as Sucursal['tipo'])} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
+                          <option value="Matriz">Matriz</option>
+                          <option value="Sucursal">Sucursal</option>
+                        </select>
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="block text-slate-400 mb-1">Nombre de la Sucursal *</label>
+                        <input type="text" value={sNombre} onChange={(e) => setSNombre(e.target.value)} placeholder="Ej. JF Equipos Nezahualcóyotl" required disabled={Boolean(sucursalEditando && sucursalTieneMovimientos(sucursalEditando.nombre))} className={`w-full border rounded-xl px-3 py-2 text-white ${sucursalEditando && sucursalTieneMovimientos(sucursalEditando.nombre) ? 'bg-slate-800 border-slate-700 text-slate-400 cursor-not-allowed' : 'bg-slate-950 border-slate-700'}`} />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="block text-slate-400 mb-1">Dirección</label>
+                        <input type="text" value={sDireccion} onChange={(e) => setSDireccion(e.target.value)} placeholder="Calle, número y colonia" className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Estado</label>
+                        <input type="text" value={sEstado} onChange={(e) => setSEstado(e.target.value)} placeholder="Estado de México" className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Ciudad / Municipio</label>
+                        <input type="text" value={sMunicipio} onChange={(e) => setSMunicipio(e.target.value)} placeholder="Nezahualcóyotl" className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Código Postal</label>
+                        <input type="text" value={sCodigoPostal} onChange={(e) => setSCodigoPostal(e.target.value)} placeholder="00000" className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono" />
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Teléfono</label>
+                        <input type="text" value={sTelefono} onChange={(e) => setSTelefono(e.target.value)} placeholder="55 0000 0000" className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Responsable</label>
+                        <input type="text" value={sResponsable} onChange={(e) => setSResponsable(e.target.value)} placeholder="Nombre del responsable" className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Correo</label>
+                        <input type="email" value={sCorreo} onChange={(e) => setSCorreo(e.target.value)} placeholder="sucursal@empresa.com" className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Almacén Principal *</label>
+                        <input type="text" value={sAlmacenPrincipal} onChange={(e) => setSAlmacenPrincipal(e.target.value)} placeholder="Ej. Almacén General" required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Estatus *</label>
+                        <select value={sEstatus} onChange={(e) => setSEstatus(e.target.value as Sucursal['estatus'])} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
+                          <option value="Activa">Activa</option>
+                          <option value="Inactiva">Inactiva</option>
+                        </select>
+                      </div>
+                      <div className="md:col-span-2 flex justify-end gap-3 pt-3 border-t border-slate-800">
+                        <button type="button" onClick={() => { setModalSucursalAbierto(false); limpiarFormularioSucursal(); }} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer">Cancelar</button>
+                        <button type="submit" className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2 rounded-xl cursor-pointer">{sucursalEditando ? 'Guardar Cambios' : 'Registrar Sucursal'}</button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* MÓDULO DE GESTIÓN DE USUARIOS Y ROLES CON EDICIÓN DE PERMISOS */}
           {moduloActivo === 'usuarios' && usuarioLogueado.rol === 'Administrador' && (
             <div className="space-y-6">
               <div className="flex justify-between items-center">
                 <div>
                   <h3 className="text-xl font-bold text-white">Módulo de Gestión de Usuarios y Permisos por Roles</h3>
-                  <p className="text-slate-400 text-sm mt-1">Cree usuarios, asigne roles y edite dinámicamente qué módulos puede ver cada rol en el sistema.</p>
+                  <p className="text-slate-400 text-sm mt-1">Cree usuarios, asigne su sucursal de trabajo, defina roles y edite dinámicamente qué módulos puede ver cada rol en el sistema.</p>
                 </div>
-                <button type="button" onClick={() => setModalUsuarioAbierto(true)} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2 rounded-xl text-xs cursor-pointer">
+                <button type="button" onClick={abrirNuevoUsuario} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2 rounded-xl text-xs cursor-pointer">
                   + Registrar Nuevo Usuario
                 </button>
               </div>
 
-              {/* MODAL NUEVO USUARIO */}
+              {/* MODAL NUEVO / EDITAR USUARIO */}
               {modalUsuarioAbierto && (
                 <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
                   <div className="bg-slate-900 border border-emerald-500 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
                     <div className="flex justify-between items-center border-b border-slate-800 pb-3">
-                      <h3 className="text-base font-bold text-emerald-400">👤 Registrar Nuevo Usuario</h3>
-                      <button type="button" onClick={() => setModalUsuarioAbierto(false)} className="text-red-400 text-xs font-bold cursor-pointer">✕ Cerrar</button>
+                      <h3 className="text-base font-bold text-emerald-400">
+                        👤 {usuarioEditando ? 'Editar Usuario' : 'Registrar Nuevo Usuario'}
+                      </h3>
+                      <button type="button" onClick={() => { setModalUsuarioAbierto(false); limpiarFormularioUsuario(); }} className="text-red-400 text-xs font-bold cursor-pointer">✕ Cerrar</button>
                     </div>
-                    <form onSubmit={(e) => {
-                      e.preventDefault();
-                      if (!nuevoNombreUsr || !nuevoEmailUsr || !nuevoPassUsr) return;
-                      const nuevo: UsuarioSistema = {
-                        id: Date.now(),
-                        nombre: nuevoNombreUsr,
-                        email: nuevoEmailUsr,
-                        password: nuevoPassUsr,
-                        rol: nuevoRolUsr,
-                        activo: true
-                      };
-                      setUsuariosSistema([...usuariosSistema, nuevo]);
-                      setModalUsuarioAbierto(false);
-                      setNuevoNombreUsr('');
-                      setNuevoEmailUsr('');
-                      setNuevoPassUsr('');
-                      setMensajeNotif('¡Usuario registrado con éxito!');
-                      setModalNotifAbierto(true);
-                    }} className="space-y-3 text-xs">
+
+                    <form onSubmit={guardarUsuarioSistema} className="space-y-3 text-xs">
                       <div>
                         <label className="block text-slate-400 mb-1">Nombre Completo *</label>
                         <input type="text" value={nuevoNombreUsr} onChange={(e) => setNuevoNombreUsr(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" />
@@ -2061,18 +2705,59 @@ export default function DashboardPage() {
                         <input type="email" value={nuevoEmailUsr} onChange={(e) => setNuevoEmailUsr(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" />
                       </div>
                       <div>
-                        <label className="block text-slate-400 mb-1">Contraseña Provisional *</label>
+                        <label className="block text-slate-400 mb-1">Contraseña *</label>
                         <input type="text" value={nuevoPassUsr} onChange={(e) => setNuevoPassUsr(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono" />
                       </div>
                       <div>
                         <label className="block text-slate-400 mb-1">Rol Asignado *</label>
-                        <select value={nuevoRolUsr} onChange={(e) => setNuevoRolUsr(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
+                        <select
+                          value={nuevoRolUsr}
+                          onChange={(e) => {
+                            const rol = e.target.value;
+                            setNuevoRolUsr(rol);
+                            if (rol === 'Administrador') setNuevaSucursalUsrId('');
+                          }}
+                          className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                        >
                           {rolesSistema.map((r, i) => <option key={i} value={r.nombreRol}>{r.nombreRol}</option>)}
                         </select>
                       </div>
+
+                      <div>
+                        <label className="block text-slate-400 mb-1">Sucursal asignada *</label>
+                        {nuevoRolUsr === 'Administrador' ? (
+                          <div className="w-full bg-blue-950/30 border border-blue-800 rounded-xl px-3 py-2 text-blue-300 font-semibold">
+                            Acceso a todas las sucursales
+                          </div>
+                        ) : (
+                          <>
+                            <select
+                              value={nuevaSucursalUsrId}
+                              onChange={(e) => setNuevaSucursalUsrId(e.target.value)}
+                              required
+                              className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                            >
+                              <option value="">-- Seleccione sucursal --</option>
+                              {sucursalesActivas.map((s: Sucursal) => (
+                                <option key={s.id} value={s.id}>{s.clave} - {s.nombre}</option>
+                              ))}
+                            </select>
+                            {sucursalesActivas.length === 0 && (
+                              <p className="text-[10px] text-amber-400 mt-1">Primero debe registrar una sucursal activa.</p>
+                            )}
+                          </>
+                        )}
+                      </div>
+
+                      <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 text-[10px] text-slate-400">
+                        <strong className="text-white">Seguridad:</strong> el rol define qué módulos puede usar; la sucursal define qué información puede ver y operar. Los usuarios no administradores quedan bloqueados a su sucursal asignada.
+                      </div>
+
                       <div className="flex justify-end gap-2 pt-2">
-                        <button type="button" onClick={() => setModalUsuarioAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer">Cancelar</button>
-                        <button type="submit" className="bg-emerald-600 text-white font-bold px-5 py-2 rounded-xl cursor-pointer">Guardar Usuario</button>
+                        <button type="button" onClick={() => { setModalUsuarioAbierto(false); limpiarFormularioUsuario(); }} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer">Cancelar</button>
+                        <button type="submit" className="bg-emerald-600 text-white font-bold px-5 py-2 rounded-xl cursor-pointer">
+                          {usuarioEditando ? 'Actualizar Usuario' : 'Guardar Usuario'}
+                        </button>
                       </div>
                     </form>
                   </div>
@@ -2140,24 +2825,43 @@ export default function DashboardPage() {
                           <th className="p-3">Nombre</th>
                           <th className="p-3">Correo</th>
                           <th className="p-3">Rol</th>
+                          <th className="p-3">Sucursal</th>
                           <th className="p-3 text-center">Estado</th>
+                          <th className="p-3 text-center">Acciones</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/60">
-                        {usuariosSistema.map((u) => (
-                          <tr key={u.id} className="hover:bg-slate-800/40">
-                            <td className="p-3 font-bold text-white">{u.nombre}</td>
-                            <td className="p-3 font-mono text-slate-300">{u.email}</td>
-                            <td className="p-3 text-amber-400 font-bold">{u.rol}</td>
-                            <td className="p-3 text-center">
-                              <button type="button" onClick={() => {
-                                setUsuariosSistema(usuariosSistema.map(usr => usr.id === u.id ? { ...usr, activo: !usr.activo } : usr));
-                              }} className={`px-2.5 py-1 rounded-full font-bold text-[10px] cursor-pointer ${u.activo ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-red-950 text-red-400 border border-red-800'}`}>
-                                {u.activo ? 'Activo' : 'Inactivo'}
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
+                        {usuariosSistema.map((u) => {
+                          const sucursalUsr = u.sucursalId ? sucursales.find(s => s.id === u.sucursalId) : null;
+                          return (
+                            <tr key={u.id} className="hover:bg-slate-800/40">
+                              <td className="p-3 font-bold text-white">{u.nombre}</td>
+                              <td className="p-3 font-mono text-slate-300">{u.email}</td>
+                              <td className="p-3 text-amber-400 font-bold">{u.rol}</td>
+                              <td className="p-3">
+                                {u.rol === 'Administrador' ? (
+                                  <span className="text-blue-400 font-bold">Todas</span>
+                                ) : (
+                                  <span className={sucursalUsr?.estatus === 'Activa' ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>
+                                    {sucursalUsr ? sucursalUsr.nombre : 'Sin asignar'}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="p-3 text-center">
+                                <button type="button" onClick={() => {
+                                  setUsuariosSistema(usuariosSistema.map(usr => usr.id === u.id ? { ...usr, activo: !usr.activo } : usr));
+                                }} className={`px-2.5 py-1 rounded-full font-bold text-[10px] cursor-pointer ${u.activo ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-red-950 text-red-400 border border-red-800'}`}>
+                                  {u.activo ? 'Activo' : 'Inactivo'}
+                                </button>
+                              </td>
+                              <td className="p-3 text-center">
+                                <button type="button" onClick={() => abrirEditarUsuario(u)} className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded-lg font-bold cursor-pointer">
+                                  ✏️ Editar
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -2540,7 +3244,15 @@ export default function DashboardPage() {
                 
                 <button
                   type="button"
-                  onClick={() => setModalIngresoStockAbierto(true)}
+                  onClick={() => {
+                    if (sucursalesActivas.length === 0) {
+                      setMensajeNotif('Primero registre una sucursal activa. Lo llevaré al módulo de Sucursales.');
+                      setModalNotifAbierto(true);
+                      setModuloActivo('sucursales');
+                      return;
+                    }
+                    setModalIngresoStockAbierto(true);
+                  }}
                   className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-5 py-2.5 rounded-xl shadow-lg text-xs flex items-center gap-2 cursor-pointer"
                 >
                   + Registrar Entrada o Movimiento
@@ -2606,18 +3318,39 @@ export default function DashboardPage() {
                         </div>
                         <div>
                           <label className="block text-slate-400 mb-1">Sucursal:</label>
-                          <select value={sucursalIngreso} onChange={(e) => setSucursalIngreso(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
-                            <option value="Matriz Principal">Matriz Principal</option>
-                            <option value="Sucursal Norte">Sucursal Norte</option>
-                          </select>
+                          {usuarioEsAdministrador ? (
+                            <select
+                              value={sucursalIngreso}
+                              onChange={(e) => {
+                                const nombre = e.target.value;
+                                setSucursalIngreso(nombre);
+                                const sucursalRef = sucursales.find(s => s.nombre === nombre);
+                                if (sucursalRef) setAlmacenIngreso(sucursalRef.almacenPrincipal);
+                              }}
+                              required
+                              className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                            >
+                              <option value="">-- Seleccione sucursal --</option>
+                              {sucursalesPermitidasUsuario.map((s: Sucursal) => (
+                                <option key={s.id} value={s.nombre}>{s.nombre}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <div className="w-full bg-slate-950 border border-emerald-800 rounded-xl px-3 py-2 text-emerald-400 font-bold">
+                              {nombreSucursalAsignadaUsuario || 'Sin sucursal asignada'}
+                            </div>
+                          )}
                         </div>
                         <div>
                           <label className="block text-slate-400 mb-1">Almacén / Ubicación:</label>
-                          <select value={almacenIngreso} onChange={(e) => setAlmacenIngreso(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
-                            <option value="Almacén Principal">Almacén Principal</option>
-                            <option value="Exhibición Tienda">Exhibición Tienda</option>
-                            <option value="Almacén Norte">Almacén Norte</option>
-                          </select>
+                          <input
+                            type="text"
+                            value={almacenIngreso}
+                            onChange={(e) => setAlmacenIngreso(e.target.value)}
+                            placeholder="Almacén principal o ubicación interna"
+                            required
+                            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                          />
                         </div>
                         <div>
                           <label className="block text-slate-400 mb-1">Cantidad a ingresar:</label>
@@ -2698,7 +3431,7 @@ export default function DashboardPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 text-sm">
-                      {inventarioSucursales.map((inv: StockSucursal, idx: number) => {
+                      {inventarioVisibleUsuario.map((inv: StockSucursal, idx: number) => {
                         const prod = catalogoProductos.find(p => p.id === inv.productoId);
                         return (
                           <tr key={idx} className="hover:bg-slate-800/40">
@@ -2741,7 +3474,7 @@ export default function DashboardPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60">
-                      {kardexMovimientos.map((k) => (
+                      {kardexVisibleUsuario.map((k) => (
                         <tr key={k.id} className="hover:bg-slate-800/40">
                           <td className="p-3 font-mono text-slate-400">
                             {k.fecha} {k.hora}
@@ -3539,10 +4272,10 @@ export default function DashboardPage() {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Total Gastos</p><h4 className="text-xl font-black text-purple-400 mt-1">{formatearMoneda(gastos.reduce((acc, g) => acc + g.total, 0))}</h4></div>
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Registros</p><h4 className="text-xl font-black text-blue-400 mt-1">{gastos.length}</h4></div>
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Pagados</p><h4 className="text-xl font-black text-emerald-400 mt-1">{gastos.filter(g => g.estatus === 'Pagado').length}</h4></div>
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Por Autorizar / Revisar</p><h4 className="text-xl font-black text-amber-400 mt-1">{gastos.filter(g => g.estatus === 'Registrado' || g.estatus === 'En revisión').length}</h4></div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Total Gastos</p><h4 className="text-xl font-black text-purple-400 mt-1">{formatearMoneda(gastosVisiblesUsuario.reduce((acc, g) => acc + g.total, 0))}</h4></div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Registros</p><h4 className="text-xl font-black text-blue-400 mt-1">{gastosVisiblesUsuario.length}</h4></div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Pagados</p><h4 className="text-xl font-black text-emerald-400 mt-1">{gastosVisiblesUsuario.filter(g => g.estatus === 'Pagado').length}</h4></div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Por Autorizar / Revisar</p><h4 className="text-xl font-black text-amber-400 mt-1">{gastosVisiblesUsuario.filter(g => g.estatus === 'Registrado' || g.estatus === 'En revisión').length}</h4></div>
               </div>
 
               {modalGastoAbierto && (
@@ -3551,7 +4284,19 @@ export default function DashboardPage() {
                     <div className="flex justify-between items-center border-b border-slate-800 pb-3"><h3 className="text-base font-bold text-purple-400">Registrar Gasto Operativo</h3><button type="button" onClick={() => setModalGastoAbierto(false)} className="text-red-400 font-bold text-xs cursor-pointer">✕ Cerrar</button></div>
                     <form onSubmit={registrarGastoOperativo} className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
                       <div><label className="block text-slate-400 mb-1">Categoría *</label><input type="text" value={gCat} onChange={(e) => setGCat(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
-                      <div><label className="block text-slate-400 mb-1">Sucursal *</label><input type="text" value={gSuc} onChange={(e) => setGSuc(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Sucursal *</label>
+                        {usuarioEsAdministrador ? (
+                          <select value={gSuc} onChange={(e) => setGSuc(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
+                            <option value="">-- Seleccione sucursal --</option>
+                            {sucursalesPermitidasUsuario.map((s: Sucursal) => <option key={s.id} value={s.nombre}>{s.nombre}</option>)}
+                          </select>
+                        ) : (
+                          <div className="w-full bg-slate-950 border border-emerald-800 rounded-xl px-3 py-2 text-emerald-400 font-bold">
+                            {nombreSucursalAsignadaUsuario || 'Sin sucursal asignada'}
+                          </div>
+                        )}
+                      </div>
                       <div><label className="block text-slate-400 mb-1">Responsable *</label><input type="text" value={gResp} onChange={(e) => setGResp(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
                       <div><label className="block text-slate-400 mb-1">Proveedor</label><input type="text" value={gProv} onChange={(e) => setGProv(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
                       <div><label className="block text-slate-400 mb-1">Fecha *</label><input type="date" value={gFecha} onChange={(e) => setGFecha(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
@@ -3571,7 +4316,7 @@ export default function DashboardPage() {
 
               <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
                 {gastos.length === 0 ? <div className="p-12 text-center"><p className="text-slate-400 font-semibold">No hay gastos operativos registrados.</p><p className="text-slate-500 text-xs mt-2">Usa “Registrar Gasto” para capturar el primero.</p></div> : (
-                  <div className="overflow-x-auto"><table className="w-full text-left border-collapse text-xs"><thead><tr className="bg-slate-950/60 text-slate-400 uppercase border-b border-slate-800"><th className="p-3">Folio</th><th className="p-3">Fecha</th><th className="p-3">Categoría</th><th className="p-3">Sucursal</th><th className="p-3">Responsable</th><th className="p-3">Importe</th><th className="p-3">IVA</th><th className="p-3">Total</th><th className="p-3">Estatus</th></tr></thead><tbody className="divide-y divide-slate-800/60">{gastos.map(g => <tr key={g.id} className="hover:bg-slate-800/40"><td className="p-3 font-mono text-blue-400 font-bold">{g.folio}</td><td className="p-3 text-slate-300">{g.fecha}</td><td className="p-3 text-white font-semibold">{g.categoria}</td><td className="p-3 text-slate-300">{g.sucursal}</td><td className="p-3 text-slate-300">{g.responsable}</td><td className="p-3 text-slate-300">{formatearMoneda(g.importe)}</td><td className="p-3 text-slate-300">{formatearMoneda(g.iva)}</td><td className="p-3 text-emerald-400 font-bold">{formatearMoneda(g.total)}</td><td className="p-3 text-amber-400 font-bold">{g.estatus}</td></tr>)}</tbody></table></div>
+                  <div className="overflow-x-auto"><table className="w-full text-left border-collapse text-xs"><thead><tr className="bg-slate-950/60 text-slate-400 uppercase border-b border-slate-800"><th className="p-3">Folio</th><th className="p-3">Fecha</th><th className="p-3">Categoría</th><th className="p-3">Sucursal</th><th className="p-3">Responsable</th><th className="p-3">Importe</th><th className="p-3">IVA</th><th className="p-3">Total</th><th className="p-3">Estatus</th></tr></thead><tbody className="divide-y divide-slate-800/60">{gastosVisiblesUsuario.map(g => <tr key={g.id} className="hover:bg-slate-800/40"><td className="p-3 font-mono text-blue-400 font-bold">{g.folio}</td><td className="p-3 text-slate-300">{g.fecha}</td><td className="p-3 text-white font-semibold">{g.categoria}</td><td className="p-3 text-slate-300">{g.sucursal}</td><td className="p-3 text-slate-300">{g.responsable}</td><td className="p-3 text-slate-300">{formatearMoneda(g.importe)}</td><td className="p-3 text-slate-300">{formatearMoneda(g.iva)}</td><td className="p-3 text-emerald-400 font-bold">{formatearMoneda(g.total)}</td><td className="p-3 text-amber-400 font-bold">{g.estatus}</td></tr>)}</tbody></table></div>
                 )}
               </div>
             </div>
@@ -3586,9 +4331,9 @@ export default function DashboardPage() {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Auditorías</p><h4 className="text-xl font-black text-blue-400 mt-1">{auditorias.length}</h4></div>
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Pendientes</p><h4 className="text-xl font-black text-amber-400 mt-1">{auditorias.filter(a => a.estatus === 'Pendiente Autorización' || a.estatus === 'En Proceso').length}</h4></div>
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Ajustes Aplicados</p><h4 className="text-xl font-black text-emerald-400 mt-1">{auditorias.filter(a => a.estatus === 'Ajuste Aplicado').length}</h4></div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Auditorías</p><h4 className="text-xl font-black text-blue-400 mt-1">{auditoriasVisiblesUsuario.length}</h4></div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Pendientes</p><h4 className="text-xl font-black text-amber-400 mt-1">{auditoriasVisiblesUsuario.filter(a => a.estatus === 'Pendiente Autorización' || a.estatus === 'En Proceso').length}</h4></div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Ajustes Aplicados</p><h4 className="text-xl font-black text-emerald-400 mt-1">{auditoriasVisiblesUsuario.filter(a => a.estatus === 'Ajuste Aplicado').length}</h4></div>
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Productos Catalogados</p><h4 className="text-xl font-black text-purple-400 mt-1">{catalogoProductos.length}</h4></div>
               </div>
 
@@ -3598,8 +4343,31 @@ export default function DashboardPage() {
                     <div className="flex justify-between items-center border-b border-slate-800 pb-3"><h3 className="text-base font-bold text-blue-400">Programar Auditoría</h3><button type="button" onClick={() => setModalAuditoriaAbierto(false)} className="text-red-400 font-bold text-xs cursor-pointer">✕ Cerrar</button></div>
                     {catalogoProductos.length === 0 && <div className="bg-amber-950/40 border border-amber-800 text-amber-300 rounded-xl p-3 text-xs">Primero registra productos y existencias. La auditoría necesita un catálogo para generar el conteo.</div>}
                     <form onSubmit={registrarAuditoria} className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                      <div><label className="block text-slate-400 mb-1">Tipo de alcance</label><select value={audTipo} onChange={(e) => setAudTipo(e.target.value as AuditoriaInventario['tipoAlcance'])} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"><option value="Sucursal">Sucursal</option><option value="Almacén">Almacén</option><option value="Categoría">Categoría</option><option value="Ubicación">Ubicación</option><option value="Completa">Completa</option><option value="Conteo Cíclico">Conteo Cíclico</option></select></div>
-                      <div><label className="block text-slate-400 mb-1">Sucursal / valor del alcance *</label><input type="text" value={audValor} onChange={(e) => setAudValor(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Tipo de alcance</label>
+                        {usuarioEsAdministrador ? (
+                          <select value={audTipo} onChange={(e) => setAudTipo(e.target.value as AuditoriaInventario['tipoAlcance'])} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
+                            <option value="Sucursal">Sucursal</option><option value="Almacén">Almacén</option><option value="Categoría">Categoría</option><option value="Ubicación">Ubicación</option><option value="Completa">Completa</option><option value="Conteo Cíclico">Conteo Cíclico</option>
+                          </select>
+                        ) : (
+                          <div className="w-full bg-slate-950 border border-emerald-800 rounded-xl px-3 py-2 text-emerald-400 font-bold">Sucursal asignada</div>
+                        )}
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Sucursal / valor del alcance *</label>
+                        {usuarioEsAdministrador ? (
+                          audTipo === 'Sucursal' ? (
+                            <select value={audValor} onChange={(e) => setAudValor(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
+                              <option value="">-- Seleccione sucursal --</option>
+                              {sucursalesPermitidasUsuario.map((s: Sucursal) => <option key={s.id} value={s.nombre}>{s.nombre}</option>)}
+                            </select>
+                          ) : (
+                            <input type="text" value={audValor} onChange={(e) => setAudValor(e.target.value)} required placeholder="Indique almacén, categoría o ubicación" className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+                          )
+                        ) : (
+                          <div className="w-full bg-slate-950 border border-emerald-800 rounded-xl px-3 py-2 text-emerald-400 font-bold">{nombreSucursalAsignadaUsuario || 'Sin sucursal asignada'}</div>
+                        )}
+                      </div>
                       <div><label className="block text-slate-400 mb-1">Responsable *</label><input type="text" value={audResp} onChange={(e) => setAudResp(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
                       <div><label className="block text-slate-400 mb-1">Observaciones</label><input type="text" value={audObs} onChange={(e) => setAudObs(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
                       <div className="md:col-span-2 flex justify-end gap-3"><button type="button" onClick={() => setModalAuditoriaAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer">Cancelar</button><button type="submit" disabled={catalogoProductos.length === 0} className={`font-bold px-5 py-2 rounded-xl ${catalogoProductos.length === 0 ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-500 text-white cursor-pointer'}`}>Crear Auditoría</button></div>
@@ -3610,7 +4378,7 @@ export default function DashboardPage() {
 
               <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
                 {auditorias.length === 0 ? <div className="p-12 text-center"><p className="text-slate-400 font-semibold">No hay auditorías registradas.</p><p className="text-slate-500 text-xs mt-2">Cuando tengas productos, programa aquí el primer conteo físico.</p></div> : (
-                  <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr className="bg-slate-950/60 text-slate-400 uppercase border-b border-slate-800"><th className="p-3">Folio</th><th className="p-3">Fecha</th><th className="p-3">Alcance</th><th className="p-3">Responsable</th><th className="p-3">Productos</th><th className="p-3">Estatus</th><th className="p-3 text-center">Acciones</th></tr></thead><tbody className="divide-y divide-slate-800/60">{auditorias.map(aud => <tr key={aud.id} className="hover:bg-slate-800/40"><td className="p-3 font-mono text-blue-400 font-bold">{aud.folio}</td><td className="p-3 text-slate-300">{aud.fechaAuditoria}</td><td className="p-3 text-white">{aud.tipoAlcance}: {aud.valorAlcance}</td><td className="p-3 text-slate-300">{aud.responsable}</td><td className="p-3 text-purple-400 font-bold">{aud.items.length}</td><td className="p-3 text-amber-400 font-bold">{aud.estatus}</td><td className="p-3 text-center"><div className="flex flex-wrap justify-center gap-1.5"><button type="button" onClick={() => setAuditoriaSeleccionadaDetalle(aud)} className="bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1 rounded font-bold cursor-pointer">🔎 Abrir Conteo</button>{aud.estatus !== 'Ajuste Aplicado' && <button type="button" onClick={() => autorizarAjusteAuditoria(aud.id)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded font-bold cursor-pointer">✓ Aplicar Ajuste</button>}</div></td></tr>)}</tbody></table></div>
+                  <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr className="bg-slate-950/60 text-slate-400 uppercase border-b border-slate-800"><th className="p-3">Folio</th><th className="p-3">Fecha</th><th className="p-3">Alcance</th><th className="p-3">Responsable</th><th className="p-3">Productos</th><th className="p-3">Estatus</th><th className="p-3 text-center">Acciones</th></tr></thead><tbody className="divide-y divide-slate-800/60">{auditoriasVisiblesUsuario.map(aud => <tr key={aud.id} className="hover:bg-slate-800/40"><td className="p-3 font-mono text-blue-400 font-bold">{aud.folio}</td><td className="p-3 text-slate-300">{aud.fechaAuditoria}</td><td className="p-3 text-white">{aud.tipoAlcance}: {aud.valorAlcance}</td><td className="p-3 text-slate-300">{aud.responsable}</td><td className="p-3 text-purple-400 font-bold">{aud.items.length}</td><td className="p-3 text-amber-400 font-bold">{aud.estatus}</td><td className="p-3 text-center"><div className="flex flex-wrap justify-center gap-1.5"><button type="button" onClick={() => setAuditoriaSeleccionadaDetalle(aud)} className="bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1 rounded font-bold cursor-pointer">🔎 Abrir Conteo</button>{aud.estatus !== 'Ajuste Aplicado' && <button type="button" onClick={() => autorizarAjusteAuditoria(aud.id)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded font-bold cursor-pointer">✓ Aplicar Ajuste</button>}</div></td></tr>)}</tbody></table></div>
                 )}
               </div>
 
@@ -3639,17 +4407,17 @@ export default function DashboardPage() {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Pendientes</p><h4 className="text-xl font-black text-amber-400 mt-1">{cotizaciones.filter(c => c.estatus === 'Pendiente').length}</h4></div>
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Autorizadas</p><h4 className="text-xl font-black text-emerald-400 mt-1">{cotizaciones.filter(c => c.estatus === 'Autorizada').length}</h4></div>
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Expiradas</p><h4 className="text-xl font-black text-red-400 mt-1">{cotizaciones.filter(c => c.estatus === 'Expirada').length}</h4></div>
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Valor Pendiente</p><h4 className="text-xl font-black text-blue-400 mt-1">{formatearMoneda(cotizaciones.filter(c => c.estatus === 'Pendiente').reduce((acc, c) => acc + c.total, 0))}</h4></div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Pendientes</p><h4 className="text-xl font-black text-amber-400 mt-1">{cotizacionesVisiblesUsuario.filter(c => c.estatus === 'Pendiente').length}</h4></div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Autorizadas</p><h4 className="text-xl font-black text-emerald-400 mt-1">{cotizacionesVisiblesUsuario.filter(c => c.estatus === 'Autorizada').length}</h4></div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Expiradas</p><h4 className="text-xl font-black text-red-400 mt-1">{cotizacionesVisiblesUsuario.filter(c => c.estatus === 'Expirada').length}</h4></div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Valor Pendiente</p><h4 className="text-xl font-black text-blue-400 mt-1">{formatearMoneda(cotizacionesVisiblesUsuario.filter(c => c.estatus === 'Pendiente').reduce((acc, c) => acc + c.total, 0))}</h4></div>
               </div>
 
               <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
-                {cotizaciones.length === 0 ? (
+                {cotizacionesVisiblesUsuario.length === 0 ? (
                   <div className="p-12 text-center"><p className="text-slate-400 font-semibold">Todavía no hay cotizaciones.</p><p className="text-slate-500 text-xs mt-2">Agrega productos al carrito en Ventas y selecciona “Generar Cotización (48h)”.</p><button type="button" onClick={() => setModuloActivo('ventas')} className="mt-4 bg-blue-600 hover:bg-blue-500 text-white font-bold px-5 py-2 rounded-xl text-xs cursor-pointer">Ir a Ventas</button></div>
                 ) : (
-                  <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr className="bg-slate-950/60 text-slate-400 uppercase border-b border-slate-800"><th className="p-3">Folio</th><th className="p-3">Cliente</th><th className="p-3">Sucursal</th><th className="p-3">Creación</th><th className="p-3">Expira</th><th className="p-3">Productos</th><th className="p-3">Total</th><th className="p-3">Estatus</th><th className="p-3 text-center">Acciones</th></tr></thead><tbody className="divide-y divide-slate-800/60">{cotizaciones.map(cot => <tr key={cot.folio} className="hover:bg-slate-800/40"><td className="p-3 font-mono text-blue-400 font-bold">{cot.folio}</td><td className="p-3 text-white font-semibold">{cot.cliente || 'Público general'}</td><td className="p-3 text-slate-300">{cot.sucursal}</td><td className="p-3 text-slate-300">{cot.fechaCreacion}</td><td className="p-3 text-slate-300">{cot.fechaExpiracion}</td><td className="p-3 text-purple-400 font-bold">{cot.items.reduce((acc, it) => acc + it.cantidadVendida, 0)}</td><td className="p-3 text-emerald-400 font-bold">{formatearMoneda(cot.total)}</td><td className="p-3"><span className={`px-2 py-1 rounded font-bold ${cot.estatus === 'Autorizada' ? 'bg-emerald-950 text-emerald-400' : cot.estatus === 'Expirada' ? 'bg-red-950 text-red-400' : 'bg-amber-950 text-amber-400'}`}>{cot.estatus}</span></td><td className="p-3 text-center"><div className="flex flex-wrap justify-center gap-1.5">{cot.estatus === 'Pendiente' && <><button type="button" onClick={() => autorizarCotizacion(cot)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded font-bold cursor-pointer">✓ Autorizar</button><button type="button" onClick={() => expirarCotizacion(cot)} className="bg-red-700 hover:bg-red-600 text-white px-2.5 py-1 rounded font-bold cursor-pointer">⏱ Expirar</button></>}</div></td></tr>)}</tbody></table></div>
+                  <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr className="bg-slate-950/60 text-slate-400 uppercase border-b border-slate-800"><th className="p-3">Folio</th><th className="p-3">Cliente</th><th className="p-3">Sucursal</th><th className="p-3">Creación</th><th className="p-3">Expira</th><th className="p-3">Productos</th><th className="p-3">Total</th><th className="p-3">Estatus</th><th className="p-3 text-center">Acciones</th></tr></thead><tbody className="divide-y divide-slate-800/60">{cotizacionesVisiblesUsuario.map(cot => <tr key={cot.folio} className="hover:bg-slate-800/40"><td className="p-3 font-mono text-blue-400 font-bold">{cot.folio}</td><td className="p-3 text-white font-semibold">{cot.cliente || 'Público general'}</td><td className="p-3 text-slate-300">{cot.sucursal}</td><td className="p-3 text-slate-300">{cot.fechaCreacion}</td><td className="p-3 text-slate-300">{cot.fechaExpiracion}</td><td className="p-3 text-purple-400 font-bold">{cot.items.reduce((acc, it) => acc + it.cantidadVendida, 0)}</td><td className="p-3 text-emerald-400 font-bold">{formatearMoneda(cot.total)}</td><td className="p-3"><span className={`px-2 py-1 rounded font-bold ${cot.estatus === 'Autorizada' ? 'bg-emerald-950 text-emerald-400' : cot.estatus === 'Expirada' ? 'bg-red-950 text-red-400' : 'bg-amber-950 text-amber-400'}`}>{cot.estatus}</span></td><td className="p-3 text-center"><div className="flex flex-wrap justify-center gap-1.5">{cot.estatus === 'Pendiente' && <><button type="button" onClick={() => autorizarCotizacion(cot)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded font-bold cursor-pointer">✓ Autorizar</button><button type="button" onClick={() => expirarCotizacion(cot)} className="bg-red-700 hover:bg-red-600 text-white px-2.5 py-1 rounded font-bold cursor-pointer">⏱ Expirar</button></>}</div></td></tr>)}</tbody></table></div>
                 )}
               </div>
             </div>
@@ -3664,15 +4432,35 @@ export default function DashboardPage() {
                   <p className="text-slate-400 text-sm">Venta activa para la sucursal: <span className="text-amber-400 font-bold">{sucursalActivaPOS}</span></p>
                 </div>
                 <div className="flex items-center gap-3">
-                  <select value={sucursalActivaPOS} onChange={(e) => setSucursalActivaPOS(e.target.value)} className="bg-slate-900 border border-amber-600 text-white text-xs rounded-xl px-3 py-2 font-semibold">
-                    <option value="Matriz Principal">Matriz Principal</option>
-                    <option value="Sucursal Norte">Sucursal Norte</option>
-                  </select>
+                  {usuarioEsAdministrador ? (
+                    <select value={sucursalActivaPOS} onChange={(e) => { setSucursalActivaPOS(e.target.value); setCarrito([]); }} className="bg-slate-900 border border-amber-600 text-white text-xs rounded-xl px-3 py-2 font-semibold">
+                      <option value="">-- Seleccione sucursal --</option>
+                      {sucursalesPermitidasUsuario.map((s: Sucursal) => (
+                        <option key={s.id} value={s.nombre}>{s.nombre}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="bg-emerald-950/50 border border-emerald-700 text-emerald-300 text-xs rounded-xl px-3 py-2 font-bold">
+                      🏢 {nombreSucursalAsignadaUsuario || 'Sin sucursal asignada'}
+                    </div>
+                  )}
                   <button type="button" onClick={() => setCamaraActiva(!camaraActiva)} className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 cursor-pointer">
                     📷 {camaraActiva ? 'Apagar Cámara' : 'Cámara Web'}
                   </button>
                 </div>
               </div>
+
+              {sucursalesActivas.length === 0 && (
+                <div className="bg-amber-950/40 border border-amber-800 rounded-2xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div>
+                    <p className="text-amber-300 font-bold text-sm">No hay sucursales activas.</p>
+                    <p className="text-amber-200/70 text-xs">Registre una sucursal antes de capturar ventas o cotizaciones.</p>
+                  </div>
+                  <button type="button" onClick={() => setModuloActivo('sucursales')} className="bg-amber-600 hover:bg-amber-500 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer">
+                    Ir a Sucursales
+                  </button>
+                </div>
+              )}
 
               {camaraActiva && (
                 <div className="bg-purple-950/40 border border-purple-800 rounded-2xl p-4 flex flex-col items-center space-y-3">
@@ -3943,11 +4731,18 @@ export default function DashboardPage() {
                 </div>
                 <div>
                   <label className="block text-slate-400 mb-1">Sucursal</label>
-                  <select value={sucursalReporte} onChange={(e) => setSucursalReporte(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
-                    <option value="Todas">Todas</option>
-                    <option value="Matriz Principal">Matriz Principal</option>
-                    <option value="Sucursal Norte">Sucursal Norte</option>
-                  </select>
+                  {usuarioEsAdministrador ? (
+                    <select value={sucursalReporte} onChange={(e) => setSucursalReporte(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
+                      <option value="Todas">Todas</option>
+                      {sucursales.map((s: Sucursal) => (
+                        <option key={s.id} value={s.nombre}>{s.nombre}{s.estatus === 'Inactiva' ? ' (Inactiva)' : ''}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="w-full bg-slate-950 border border-emerald-800 rounded-xl px-3 py-2 text-emerald-400 font-bold">
+                      {nombreSucursalAsignadaUsuario || 'Sin sucursal asignada'}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="block text-slate-400 mb-1">Categoría</label>
@@ -4016,7 +4811,7 @@ export default function DashboardPage() {
             <div className="space-y-6">
               <h3 className="text-xl font-bold text-white">Historial de Tickets y Reimpresión</h3>
               <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
-                {historialTickets.length === 0 ? (
+                {historialVisibleUsuario.length === 0 ? (
                   <div className="p-12 text-center text-slate-500 text-sm">No hay tickets registrados.</div>
                 ) : (
                   <div className="overflow-x-auto">
@@ -4032,7 +4827,7 @@ export default function DashboardPage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/60 text-sm">
-                        {historialTickets.map((t: TicketGuardado, i: number) => (
+                        {historialVisibleUsuario.map((t: TicketGuardado, i: number) => (
                           <tr key={i} className="hover:bg-slate-800/40">
                             <td className="p-4 font-mono text-blue-400 font-bold text-xs">{t.folio}</td>
                             <td className="p-4 text-slate-400 text-xs">{t.fecha}</td>
