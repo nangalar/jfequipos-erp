@@ -333,7 +333,7 @@ export default function DashboardPage() {
   const [reciboUltimoGenerado, setReciboUltimoGenerado] = useState<any>(null);
 
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
-  const [modalProveedorAbierto, setModalProveedorAbierto] = useState<boolean>(false);
+  const [modalProveedorAbierto, setModalProveedorAbierto] = useState(false);
   const [proveedorEditando, setProveedorEditando] = useState<Proveedor | null>(null);
 
   const [pRazonSocial, setPRazonSocial] = useState('');
@@ -355,7 +355,7 @@ export default function DashboardPage() {
   const [pEstatus, setPEstatus] = useState<'Activo' | 'Inactivo'>('Activo');
 
   const [busquedaInventarioModal, setBusquedaInventarioModal] = useState<string>('');
-  const [modalIngresoStockAbierto, setModalIngresoStockAbierto] = useState<boolean>(false);
+  const [modalIngresoStockAbierto, setModalIngresoStockAbierto] = useState(false);
   const [productoIngreso, setProductoIngreso] = useState<ProductoCatalogo | null>(null);
   const [cantIngreso, setCantIngreso] = useState<string>('10');
   const [minIngreso, setMinIngreso] = useState<string>('3');
@@ -388,7 +388,7 @@ export default function DashboardPage() {
   const [inputNumeroSerieFisico, setInputNumeroSerieFisico] = useState<string>('');
 
   const [gastos, setGastos] = useState<GastoOperativo[]>([]);
-  const [modalGastoAbierto, setModalGastoAbierto] = useState<boolean>(false);
+  const [modalGastoAbierto, setModalGastoAbierto] = useState(false);
 
   const [gCat, setGCat] = useState('Mantenimiento y Refacciones');
   const [gSuc, setGSuc] = useState('Matriz Principal');
@@ -404,7 +404,7 @@ export default function DashboardPage() {
   const [gObs, setGObs] = useState('Compra de suministros y limpieza.');
 
   const [cuentasPorPagar, setCuentasPorPagar] = useState<CuentaPorPagar[]>([]);
-  const [modalCxPAbierto, setModalCxPAbierto] = useState<boolean>(false);
+  const [modalCxPAbierto, setModalCxPAbierto] = useState(false);
   const [modalPagoAbierto, setModalPagoAbierto] = useState<boolean>(false);
   const [cuentaSeleccionadaPago, setCuentaSeleccionadaPago] = useState<CuentaPorPagar | null>(null);
   const [montoAbono, setMontoAbono] = useState<string>('');
@@ -421,7 +421,7 @@ export default function DashboardPage() {
   const [cxpVencimiento, setCxpVencimiento] = useState('2026-07-15');
 
   const [auditorias, setAuditorias] = useState<AuditoriaInventario[]>([]);
-  const [modalAuditoriaAbierto, setModalAuditoriaAbierto] = useState<boolean>(false);
+  const [modalAuditoriaAbierto, setModalAuditoriaAbierto] = useState(false);
   const [auditoriaSeleccionadaDetalle, setAuditoriaSeleccionadaDetalle] = useState<AuditoriaInventario | null>(null);
   const [codigoEscaneoAuditoria, setCodigoEscaneoAuditoria] = useState<string>('');
   const [audTipo, setAudTipo] = useState<AuditoriaInventario['tipoAlcance']>('Sucursal');
@@ -2442,8 +2442,85 @@ export default function DashboardPage() {
             </div>
           </div>
           )}
+      {/* MODAL DE REGISTRO DE PROVEEDORES */}
+        {modalProveedorAbierto && (
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-4">
+              <h3 className="text-lg font-bold text-white">Registrar Nuevo Proveedor</h3>
+              <form onSubmit={guardarProveedor} className="space-y-3 text-xs">
+                <div>
+                  <label className="block text-slate-400 mb-1">Razón Social *</label>
+                  <input type="text" value={pRazonSocial} onChange={(e) => setPRazonSocial(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" placeholder="Ej. Global Fitness S.A. de C.V." />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1">Nombre Comercial *</label>
+                  <input type="text" value={pNombreComercial} onChange={(e) => setPNombreComercial(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" placeholder="Ej. Global Fitness" />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1">RFC *</label>
+                  <input type="text" value={pRfc} onChange={(e) => setPRfc(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono uppercase" placeholder="XAXX010101000" />
+                </div>
+                <div className="flex justify-end gap-2 pt-3">
+                  <button type="button" onClick={() => setModalProveedorAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer">Cancelar</button>
+                  <button type="submit" className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2 rounded-xl cursor-pointer">Guardar Proveedor</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+        {/* MODAL DE CUENTAS POR PAGAR (CxP) */}
+        {modalCxPAbierto && (
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-4">
+              <h3 className="text-lg font-bold text-white">Módulo Cuentas por Pagar</h3>
+              <p className="text-xs text-slate-400">Panel de control y registro de facturas pendientes.</p>
+              <div className="flex justify-end gap-2 pt-3">
+                <button type="button" onClick={() => setModalCxPAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer text-xs">Cerrar</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL DE GASTOS OPERATIVOS */}
+        {modalGastoAbierto && (
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-4">
+              <h3 className="text-lg font-bold text-white">Módulo de Gastos Operativos</h3>
+              <p className="text-xs text-slate-400">Registro y control de salidas de dinero.</p>
+              <div className="flex justify-end gap-2 pt-3">
+                <button type="button" onClick={() => setModalGastoAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer text-xs">Cerrar</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL DE AUDITORÍA DE INVENTARIOS */}
+        {modalAuditoriaAbierto && (
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-4">
+              <h3 className="text-lg font-bold text-white">Auditoría de Inventarios</h3>
+              <p className="text-xs text-slate-400">Programación y revisión de existencias.</p>
+              <div className="flex justify-end gap-2 pt-3">
+                <button type="button" onClick={() => setModalAuditoriaAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer text-xs">Cerrar</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL DE INGRESO DE STOCK */}
+        {modalIngresoStockAbierto && (
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-4">
+              <h3 className="text-lg font-bold text-white">Ingreso de Stock</h3>
+              <p className="text-xs text-slate-400">Alta de mercancía al almacén.</p>
+              <div className="flex justify-end gap-2 pt-3">
+                <button type="button" onClick={() => setModalIngresoStockAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer text-xs">Cerrar</button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
-  </main>
-</div>
+    </main>
+  </div>
   );
 }
