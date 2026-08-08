@@ -3359,6 +3359,302 @@ export default function DashboardPage() {
             </div>
           )}
 
+          {/* MÓDULO DE CUENTAS POR PAGAR */}
+          {moduloActivo === 'cxp' && verificarPermisoModulo('cxp') && (
+            <div className="space-y-6">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div>
+                  <h3 className="text-xl font-bold text-white">Cuentas por Pagar</h3>
+                  <p className="text-slate-400 text-sm mt-1">Registra facturas, vencimientos, pagos parciales y consulta el historial de abonos.</p>
+                </div>
+                <button type="button" onClick={() => setModalCxPAbierto(true)} className="bg-amber-600 hover:bg-amber-500 text-white font-bold px-5 py-2.5 rounded-xl text-xs cursor-pointer">
+                  + Registrar Factura / CxP
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+                  <p className="text-[11px] uppercase text-slate-400 font-semibold">Saldo por Pagar</p>
+                  <h4 className="text-xl font-black text-amber-400 mt-1">{formatearMoneda(cuentasPorPagar.reduce((acc, c) => acc + c.saldoPendiente, 0))}</h4>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+                  <p className="text-[11px] uppercase text-slate-400 font-semibold">Cuentas Registradas</p>
+                  <h4 className="text-xl font-black text-blue-400 mt-1">{cuentasPorPagar.length}</h4>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+                  <p className="text-[11px] uppercase text-slate-400 font-semibold">Vencidas</p>
+                  <h4 className="text-xl font-black text-red-400 mt-1">{cuentasPorPagar.filter(c => c.estatus === 'Vencida' || (c.estatus !== 'Pagada' && c.fechaVencimiento && new Date(c.fechaVencimiento) < new Date())).length}</h4>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+                  <p className="text-[11px] uppercase text-slate-400 font-semibold">Pagadas</p>
+                  <h4 className="text-xl font-black text-emerald-400 mt-1">{cuentasPorPagar.filter(c => c.estatus === 'Pagada').length}</h4>
+                </div>
+              </div>
+
+              {modalCxPAbierto && (
+                <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+                  <div className="bg-slate-900 border border-amber-500/60 rounded-2xl p-6 max-w-2xl w-full shadow-2xl max-h-[90vh] overflow-y-auto space-y-4">
+                    <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+                      <h3 className="text-base font-bold text-amber-400">Registrar Cuenta por Pagar</h3>
+                      <button type="button" onClick={() => setModalCxPAbierto(false)} className="text-red-400 font-bold text-xs cursor-pointer">✕ Cerrar</button>
+                    </div>
+                    <form onSubmit={registrarFacturaCxP} className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                      <div>
+                        <label className="block text-slate-400 mb-1">Folio de factura / documento</label>
+                        <input type="text" value={cxpFolio} onChange={(e) => setCxpFolio(e.target.value)} placeholder="FAC-001 (opcional)" className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Proveedor</label>
+                        <select value={cxpProvId} onChange={(e) => setCxpProvId(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
+                          <option value="">-- Proveedor general / sin seleccionar --</option>
+                          {proveedores.filter(p => p.estatus === 'Activo').map(p => <option key={p.id} value={p.id}>{p.nombreComercial}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Orden de compra</label>
+                        <input type="text" value={cxpOC} onChange={(e) => setCxpOC(e.target.value)} placeholder="OC-001" className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Clasificación del gasto *</label>
+                        <input type="text" value={cxpGasto} onChange={(e) => setCxpGasto(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Monto total *</label>
+                        <input type="number" min="0" step="0.01" value={cxpMonto} onChange={(e) => setCxpMonto(e.target.value)} required placeholder="0.00" className="w-full bg-slate-950 border border-amber-700 rounded-xl px-3 py-2 text-white font-mono" />
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Fecha de vencimiento *</label>
+                        <input type="date" value={cxpVencimiento} onChange={(e) => setCxpVencimiento(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+                      </div>
+                      <div className="md:col-span-2 flex justify-end gap-3 pt-2">
+                        <button type="button" onClick={() => setModalCxPAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer">Cancelar</button>
+                        <button type="submit" className="bg-amber-600 hover:bg-amber-500 text-white font-bold px-5 py-2 rounded-xl cursor-pointer">Guardar Cuenta</button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              {modalPagoAbierto && cuentaSeleccionadaPago && (
+                <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+                  <div className="bg-slate-900 border border-emerald-500/60 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
+                    <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+                      <h3 className="text-base font-bold text-emerald-400">Registrar Pago / Abono</h3>
+                      <button type="button" onClick={() => setModalPagoAbierto(false)} className="text-red-400 font-bold text-xs cursor-pointer">✕ Cerrar</button>
+                    </div>
+                    <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs space-y-1">
+                      <p className="text-slate-400">Factura: <strong className="text-white">{cuentaSeleccionadaPago.folioFactura}</strong></p>
+                      <p className="text-slate-400">Proveedor: <strong className="text-white">{cuentaSeleccionadaPago.proveedorNombre}</strong></p>
+                      <p className="text-slate-400">Saldo pendiente: <strong className="text-amber-400">{formatearMoneda(cuentaSeleccionadaPago.saldoPendiente)}</strong></p>
+                    </div>
+                    <form onSubmit={realizarPagoCxP} className="space-y-3 text-xs">
+                      <div>
+                        <label className="block text-slate-400 mb-1">Fecha del pago *</label>
+                        <input type="date" value={fechaAbonoInput} onChange={(e) => setFechaAbonoInput(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Monto *</label>
+                        <input type="number" min="0.01" max={cuentaSeleccionadaPago.saldoPendiente} step="0.01" value={montoAbono} onChange={(e) => setMontoAbono(e.target.value)} required className="w-full bg-slate-950 border border-emerald-700 rounded-xl px-3 py-2 text-white font-mono" />
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Referencia</label>
+                        <input type="text" value={referenciaAbonoInput} onChange={(e) => setReferenciaAbonoInput(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+                      </div>
+                      <div className="flex justify-end gap-3 pt-2">
+                        <button type="button" onClick={() => setModalPagoAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer">Cancelar</button>
+                        <button type="submit" className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2 rounded-xl cursor-pointer">Registrar Pago</button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              {modalHistorialAbonosAbierto && cuentaHistorialSeleccionada && (
+                <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+                  <div className="bg-slate-900 border border-blue-500/60 rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-4">
+                    <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+                      <h3 className="text-base font-bold text-blue-400">Historial de Abonos · {cuentaHistorialSeleccionada.folioFactura}</h3>
+                      <button type="button" onClick={() => setModalHistorialAbonosAbierto(false)} className="text-red-400 font-bold text-xs cursor-pointer">✕ Cerrar</button>
+                    </div>
+                    <div className="space-y-2 max-h-80 overflow-y-auto">
+                      {cuentaHistorialSeleccionada.historialAbonos.length === 0 ? (
+                        <p className="text-xs text-slate-500 bg-slate-950 border border-slate-800 rounded-xl p-4">Todavía no hay abonos registrados.</p>
+                      ) : cuentaHistorialSeleccionada.historialAbonos.map(ab => (
+                        <div key={ab.id} className="bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs flex justify-between gap-4">
+                          <div><p className="text-white font-bold">{ab.fechaAbono}</p><p className="text-slate-400">{ab.referencia}</p></div>
+                          <strong className="text-emerald-400">{formatearMoneda(ab.montoAbono)}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+                {cuentasPorPagar.length === 0 ? (
+                  <div className="p-12 text-center">
+                    <p className="text-slate-400 font-semibold">No hay cuentas por pagar registradas.</p>
+                    <p className="text-slate-500 text-xs mt-2">Usa “Registrar Factura / CxP” para capturar la primera.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead><tr className="bg-slate-950/60 text-slate-400 uppercase border-b border-slate-800">
+                        <th className="p-3">Factura</th><th className="p-3">Proveedor</th><th className="p-3">Clasificación</th><th className="p-3">Vencimiento</th><th className="p-3">Total</th><th className="p-3">Pagado</th><th className="p-3">Saldo</th><th className="p-3">Estatus</th><th className="p-3 text-center">Acciones</th>
+                      </tr></thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {cuentasPorPagar.map(cuenta => (
+                          <tr key={cuenta.id} className="hover:bg-slate-800/40">
+                            <td className="p-3 font-mono text-blue-400 font-bold">{cuenta.folioFactura}</td>
+                            <td className="p-3 text-white font-semibold">{cuenta.proveedorNombre}</td>
+                            <td className="p-3 text-slate-300">{cuenta.clasificacionGasto}</td>
+                            <td className="p-3 text-slate-300 font-mono">{cuenta.fechaVencimiento}</td>
+                            <td className="p-3 text-slate-300">{formatearMoneda(cuenta.montoTotal)}</td>
+                            <td className="p-3 text-emerald-400">{formatearMoneda(cuenta.montoPagado)}</td>
+                            <td className="p-3 text-amber-400 font-bold">{formatearMoneda(cuenta.saldoPendiente)}</td>
+                            <td className="p-3"><span className={`px-2 py-1 rounded font-bold ${cuenta.estatus === 'Pagada' ? 'bg-emerald-950 text-emerald-400' : cuenta.estatus === 'Vencida' ? 'bg-red-950 text-red-400' : 'bg-amber-950 text-amber-400'}`}>{cuenta.estatus}</span></td>
+                            <td className="p-3 text-center"><div className="flex flex-wrap justify-center gap-1.5">
+                              {cuenta.estatus !== 'Pagada' && <button type="button" onClick={() => { setCuentaSeleccionadaPago(cuenta); setMontoAbono(String(cuenta.saldoPendiente)); setModalPagoAbierto(true); }} className="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded font-bold cursor-pointer">💵 Pagar</button>}
+                              <button type="button" onClick={() => { setCuentaHistorialSeleccionada(cuenta); setModalHistorialAbonosAbierto(true); }} className="bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1 rounded font-bold cursor-pointer">📋 Historial</button>
+                            </div></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* MÓDULO DE GASTOS OPERATIVOS */}
+          {moduloActivo === 'gastos' && verificarPermisoModulo('gastos') && (
+            <div className="space-y-6">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div>
+                  <h3 className="text-xl font-bold text-white">Gastos Operativos</h3>
+                  <p className="text-slate-400 text-sm mt-1">Control de gastos, comprobantes, centro de costos, autorización y estatus.</p>
+                </div>
+                <button type="button" onClick={() => setModalGastoAbierto(true)} className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-5 py-2.5 rounded-xl text-xs cursor-pointer">+ Registrar Gasto</button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Total Gastos</p><h4 className="text-xl font-black text-purple-400 mt-1">{formatearMoneda(gastos.reduce((acc, g) => acc + g.total, 0))}</h4></div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Registros</p><h4 className="text-xl font-black text-blue-400 mt-1">{gastos.length}</h4></div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Pagados</p><h4 className="text-xl font-black text-emerald-400 mt-1">{gastos.filter(g => g.estatus === 'Pagado').length}</h4></div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Por Autorizar / Revisar</p><h4 className="text-xl font-black text-amber-400 mt-1">{gastos.filter(g => g.estatus === 'Registrado' || g.estatus === 'En revisión').length}</h4></div>
+              </div>
+
+              {modalGastoAbierto && (
+                <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+                  <div className="bg-slate-900 border border-purple-500/60 rounded-2xl p-6 max-w-3xl w-full shadow-2xl max-h-[90vh] overflow-y-auto space-y-4">
+                    <div className="flex justify-between items-center border-b border-slate-800 pb-3"><h3 className="text-base font-bold text-purple-400">Registrar Gasto Operativo</h3><button type="button" onClick={() => setModalGastoAbierto(false)} className="text-red-400 font-bold text-xs cursor-pointer">✕ Cerrar</button></div>
+                    <form onSubmit={registrarGastoOperativo} className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                      <div><label className="block text-slate-400 mb-1">Categoría *</label><input type="text" value={gCat} onChange={(e) => setGCat(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
+                      <div><label className="block text-slate-400 mb-1">Sucursal *</label><input type="text" value={gSuc} onChange={(e) => setGSuc(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
+                      <div><label className="block text-slate-400 mb-1">Responsable *</label><input type="text" value={gResp} onChange={(e) => setGResp(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
+                      <div><label className="block text-slate-400 mb-1">Proveedor</label><input type="text" value={gProv} onChange={(e) => setGProv(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
+                      <div><label className="block text-slate-400 mb-1">Fecha *</label><input type="date" value={gFecha} onChange={(e) => setGFecha(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
+                      <div><label className="block text-slate-400 mb-1">Forma de pago *</label><select value={gFormaPago} onChange={(e) => setGFormaPago(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"><option>Transferencia SPEI</option><option>Efectivo</option><option>Tarjeta</option><option>Cheque</option><option>Otro</option></select></div>
+                      <div><label className="block text-slate-400 mb-1">Importe antes de IVA *</label><input type="number" min="0" step="0.01" value={gImporte} onChange={(e) => setGImporte(e.target.value)} required placeholder="0.00" className="w-full bg-slate-950 border border-purple-700 rounded-xl px-3 py-2 text-white font-mono" /></div>
+                      <div><label className="block text-slate-400 mb-1">Comprobante / referencia</label><input type="text" value={gDoc} onChange={(e) => setGDoc(e.target.value)} placeholder="Factura, ticket o archivo" className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
+                      <div><label className="block text-slate-400 mb-1">Centro de costos</label><input type="text" value={gCentro} onChange={(e) => setGCentro(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
+                      <div><label className="block text-slate-400 mb-1">Autorización</label><input type="text" value={gAut} onChange={(e) => setGAut(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
+                      <div><label className="block text-slate-400 mb-1">Estatus</label><select value={gEstatus} onChange={(e) => setGEstatus(e.target.value as GastoOperativo['estatus'])} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"><option value="Registrado">Registrado</option><option value="En revisión">En revisión</option><option value="Autorizado">Autorizado</option><option value="Pagado">Pagado</option><option value="Cancelado">Cancelado</option></select></div>
+                      <div className="md:col-span-2"><label className="block text-slate-400 mb-1">Observaciones</label><textarea value={gObs} onChange={(e) => setGObs(e.target.value)} rows={2} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
+                      <div className="md:col-span-3 bg-slate-950 border border-slate-800 rounded-xl p-3 text-slate-400">IVA calculado automáticamente al 16%. Total estimado: <strong className="text-emerald-400">{formatearMoneda((Number(gImporte) || 0) * 1.16)}</strong></div>
+                      <div className="md:col-span-3 flex justify-end gap-3"><button type="button" onClick={() => setModalGastoAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer">Cancelar</button><button type="submit" className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-5 py-2 rounded-xl cursor-pointer">Guardar Gasto</button></div>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+                {gastos.length === 0 ? <div className="p-12 text-center"><p className="text-slate-400 font-semibold">No hay gastos operativos registrados.</p><p className="text-slate-500 text-xs mt-2">Usa “Registrar Gasto” para capturar el primero.</p></div> : (
+                  <div className="overflow-x-auto"><table className="w-full text-left border-collapse text-xs"><thead><tr className="bg-slate-950/60 text-slate-400 uppercase border-b border-slate-800"><th className="p-3">Folio</th><th className="p-3">Fecha</th><th className="p-3">Categoría</th><th className="p-3">Sucursal</th><th className="p-3">Responsable</th><th className="p-3">Importe</th><th className="p-3">IVA</th><th className="p-3">Total</th><th className="p-3">Estatus</th></tr></thead><tbody className="divide-y divide-slate-800/60">{gastos.map(g => <tr key={g.id} className="hover:bg-slate-800/40"><td className="p-3 font-mono text-blue-400 font-bold">{g.folio}</td><td className="p-3 text-slate-300">{g.fecha}</td><td className="p-3 text-white font-semibold">{g.categoria}</td><td className="p-3 text-slate-300">{g.sucursal}</td><td className="p-3 text-slate-300">{g.responsable}</td><td className="p-3 text-slate-300">{formatearMoneda(g.importe)}</td><td className="p-3 text-slate-300">{formatearMoneda(g.iva)}</td><td className="p-3 text-emerald-400 font-bold">{formatearMoneda(g.total)}</td><td className="p-3 text-amber-400 font-bold">{g.estatus}</td></tr>)}</tbody></table></div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* MÓDULO DE AUDITORÍA DE INVENTARIOS */}
+          {moduloActivo === 'auditoria' && verificarPermisoModulo('auditoria') && (
+            <div className="space-y-6">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div><h3 className="text-xl font-bold text-white">Auditoría de Inventarios</h3><p className="text-slate-400 text-sm mt-1">Programa conteos, escanea códigos/SKU, captura existencias físicas y aplica ajustes autorizados al Kardex.</p></div>
+                <button type="button" onClick={() => setModalAuditoriaAbierto(true)} className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-5 py-2.5 rounded-xl text-xs cursor-pointer">+ Programar Auditoría</button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Auditorías</p><h4 className="text-xl font-black text-blue-400 mt-1">{auditorias.length}</h4></div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Pendientes</p><h4 className="text-xl font-black text-amber-400 mt-1">{auditorias.filter(a => a.estatus === 'Pendiente Autorización' || a.estatus === 'En Proceso').length}</h4></div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Ajustes Aplicados</p><h4 className="text-xl font-black text-emerald-400 mt-1">{auditorias.filter(a => a.estatus === 'Ajuste Aplicado').length}</h4></div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Productos Catalogados</p><h4 className="text-xl font-black text-purple-400 mt-1">{catalogoProductos.length}</h4></div>
+              </div>
+
+              {modalAuditoriaAbierto && (
+                <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+                  <div className="bg-slate-900 border border-blue-500/60 rounded-2xl p-6 max-w-2xl w-full shadow-2xl space-y-4">
+                    <div className="flex justify-between items-center border-b border-slate-800 pb-3"><h3 className="text-base font-bold text-blue-400">Programar Auditoría</h3><button type="button" onClick={() => setModalAuditoriaAbierto(false)} className="text-red-400 font-bold text-xs cursor-pointer">✕ Cerrar</button></div>
+                    {catalogoProductos.length === 0 && <div className="bg-amber-950/40 border border-amber-800 text-amber-300 rounded-xl p-3 text-xs">Primero registra productos y existencias. La auditoría necesita un catálogo para generar el conteo.</div>}
+                    <form onSubmit={registrarAuditoria} className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                      <div><label className="block text-slate-400 mb-1">Tipo de alcance</label><select value={audTipo} onChange={(e) => setAudTipo(e.target.value as AuditoriaInventario['tipoAlcance'])} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"><option value="Sucursal">Sucursal</option><option value="Almacén">Almacén</option><option value="Categoría">Categoría</option><option value="Ubicación">Ubicación</option><option value="Completa">Completa</option><option value="Conteo Cíclico">Conteo Cíclico</option></select></div>
+                      <div><label className="block text-slate-400 mb-1">Sucursal / valor del alcance *</label><input type="text" value={audValor} onChange={(e) => setAudValor(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
+                      <div><label className="block text-slate-400 mb-1">Responsable *</label><input type="text" value={audResp} onChange={(e) => setAudResp(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
+                      <div><label className="block text-slate-400 mb-1">Observaciones</label><input type="text" value={audObs} onChange={(e) => setAudObs(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
+                      <div className="md:col-span-2 flex justify-end gap-3"><button type="button" onClick={() => setModalAuditoriaAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer">Cancelar</button><button type="submit" disabled={catalogoProductos.length === 0} className={`font-bold px-5 py-2 rounded-xl ${catalogoProductos.length === 0 ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-500 text-white cursor-pointer'}`}>Crear Auditoría</button></div>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+                {auditorias.length === 0 ? <div className="p-12 text-center"><p className="text-slate-400 font-semibold">No hay auditorías registradas.</p><p className="text-slate-500 text-xs mt-2">Cuando tengas productos, programa aquí el primer conteo físico.</p></div> : (
+                  <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr className="bg-slate-950/60 text-slate-400 uppercase border-b border-slate-800"><th className="p-3">Folio</th><th className="p-3">Fecha</th><th className="p-3">Alcance</th><th className="p-3">Responsable</th><th className="p-3">Productos</th><th className="p-3">Estatus</th><th className="p-3 text-center">Acciones</th></tr></thead><tbody className="divide-y divide-slate-800/60">{auditorias.map(aud => <tr key={aud.id} className="hover:bg-slate-800/40"><td className="p-3 font-mono text-blue-400 font-bold">{aud.folio}</td><td className="p-3 text-slate-300">{aud.fechaAuditoria}</td><td className="p-3 text-white">{aud.tipoAlcance}: {aud.valorAlcance}</td><td className="p-3 text-slate-300">{aud.responsable}</td><td className="p-3 text-purple-400 font-bold">{aud.items.length}</td><td className="p-3 text-amber-400 font-bold">{aud.estatus}</td><td className="p-3 text-center"><div className="flex flex-wrap justify-center gap-1.5"><button type="button" onClick={() => setAuditoriaSeleccionadaDetalle(aud)} className="bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1 rounded font-bold cursor-pointer">🔎 Abrir Conteo</button>{aud.estatus !== 'Ajuste Aplicado' && <button type="button" onClick={() => autorizarAjusteAuditoria(aud.id)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded font-bold cursor-pointer">✓ Aplicar Ajuste</button>}</div></td></tr>)}</tbody></table></div>
+                )}
+              </div>
+
+              {auditoriaSeleccionadaDetalle && (
+                <div className="bg-slate-900 border border-blue-700 rounded-2xl p-6 space-y-4 shadow-xl">
+                  <div className="flex flex-col md:flex-row justify-between gap-3 md:items-center"><div><h4 className="text-white font-bold">Conteo físico · {auditoriaSeleccionadaDetalle.folio}</h4><p className="text-xs text-slate-400">Escanea el SKU/código o captura manualmente la existencia física.</p></div><button type="button" onClick={() => { setAuditoriaSeleccionadaDetalle(null); setCamaraAuditoriaActiva(false); }} className="bg-slate-800 text-slate-300 px-3 py-1.5 rounded-xl text-xs cursor-pointer">Cerrar detalle</button></div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3">
+                    <form onSubmit={escanearProductoAuditoria} className="flex gap-2"><input type="text" value={codigoEscaneoAuditoria} onChange={(e) => setCodigoEscaneoAuditoria(e.target.value)} placeholder="Escanear o escribir SKU / código" className="flex-1 bg-slate-950 border border-blue-700 rounded-xl px-3 py-2 text-white text-xs font-mono" /><button type="submit" className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer">+ Contar 1</button></form>
+                    <button type="button" onClick={() => setCamaraAuditoriaActiva(!camaraAuditoriaActiva)} className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer">📷 {camaraAuditoriaActiva ? 'Apagar Cámara' : 'Abrir Cámara'}</button>
+                  </div>
+                  {camaraAuditoriaActiva && <div className="bg-purple-950/30 border border-purple-800 rounded-xl p-3 flex flex-col items-center gap-2"><video ref={videoAuditoriaRef} autoPlay playsInline className="w-full max-w-lg h-52 bg-black rounded-xl object-cover" /><p className="text-[10px] text-purple-300">El visor está activo. El código puede capturarse con lector Bluetooth o escribirse en el campo de escaneo.</p></div>}
+
+                  <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr className="bg-slate-950/60 text-slate-400 uppercase"><th className="p-3">Código</th><th className="p-3">Producto</th><th className="p-3">Teórica</th><th className="p-3">Física</th><th className="p-3">Diferencia</th><th className="p-3">Resultado</th></tr></thead><tbody className="divide-y divide-slate-800/60">{auditoriaSeleccionadaDetalle.items.map(it => <tr key={it.productoId}><td className="p-3 font-mono text-blue-400">{it.codigo}</td><td className="p-3 text-white">{it.nombreProducto}</td><td className="p-3 text-slate-300">{it.existenciaTeorica}</td><td className="p-3"><input type="number" min="0" value={it.existenciaFisica} onChange={(e) => actualizarConteoManual(it.productoId, e.target.value)} className="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-white font-mono" /></td><td className={`p-3 font-bold ${it.diferencia === 0 ? 'text-emerald-400' : it.diferencia < 0 ? 'text-red-400' : 'text-amber-400'}`}>{it.diferencia > 0 ? '+' : ''}{it.diferencia}</td><td className="p-3 text-slate-300">{it.tipoDiferencia}</td></tr>)}</tbody></table></div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* MÓDULO DE COTIZACIONES */}
+          {moduloActivo === 'cotizaciones' && verificarPermisoModulo('cotizaciones') && (
+            <div className="space-y-6">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div><h3 className="text-xl font-bold text-white">Cotizaciones con Reserva de 48 Horas</h3><p className="text-slate-400 text-sm mt-1">Las cotizaciones se generan desde Ventas y reservan temporalmente el inventario hasta autorizarse o expirar.</p></div>
+                <button type="button" onClick={() => setModuloActivo('ventas')} className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-5 py-2.5 rounded-xl text-xs cursor-pointer">+ Crear desde Ventas</button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Pendientes</p><h4 className="text-xl font-black text-amber-400 mt-1">{cotizaciones.filter(c => c.estatus === 'Pendiente').length}</h4></div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Autorizadas</p><h4 className="text-xl font-black text-emerald-400 mt-1">{cotizaciones.filter(c => c.estatus === 'Autorizada').length}</h4></div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Expiradas</p><h4 className="text-xl font-black text-red-400 mt-1">{cotizaciones.filter(c => c.estatus === 'Expirada').length}</h4></div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[11px] uppercase text-slate-400 font-semibold">Valor Pendiente</p><h4 className="text-xl font-black text-blue-400 mt-1">{formatearMoneda(cotizaciones.filter(c => c.estatus === 'Pendiente').reduce((acc, c) => acc + c.total, 0))}</h4></div>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+                {cotizaciones.length === 0 ? (
+                  <div className="p-12 text-center"><p className="text-slate-400 font-semibold">Todavía no hay cotizaciones.</p><p className="text-slate-500 text-xs mt-2">Agrega productos al carrito en Ventas y selecciona “Generar Cotización (48h)”.</p><button type="button" onClick={() => setModuloActivo('ventas')} className="mt-4 bg-blue-600 hover:bg-blue-500 text-white font-bold px-5 py-2 rounded-xl text-xs cursor-pointer">Ir a Ventas</button></div>
+                ) : (
+                  <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr className="bg-slate-950/60 text-slate-400 uppercase border-b border-slate-800"><th className="p-3">Folio</th><th className="p-3">Cliente</th><th className="p-3">Sucursal</th><th className="p-3">Creación</th><th className="p-3">Expira</th><th className="p-3">Productos</th><th className="p-3">Total</th><th className="p-3">Estatus</th><th className="p-3 text-center">Acciones</th></tr></thead><tbody className="divide-y divide-slate-800/60">{cotizaciones.map(cot => <tr key={cot.folio} className="hover:bg-slate-800/40"><td className="p-3 font-mono text-blue-400 font-bold">{cot.folio}</td><td className="p-3 text-white font-semibold">{cot.cliente || 'Público general'}</td><td className="p-3 text-slate-300">{cot.sucursal}</td><td className="p-3 text-slate-300">{cot.fechaCreacion}</td><td className="p-3 text-slate-300">{cot.fechaExpiracion}</td><td className="p-3 text-purple-400 font-bold">{cot.items.reduce((acc, it) => acc + it.cantidadVendida, 0)}</td><td className="p-3 text-emerald-400 font-bold">{formatearMoneda(cot.total)}</td><td className="p-3"><span className={`px-2 py-1 rounded font-bold ${cot.estatus === 'Autorizada' ? 'bg-emerald-950 text-emerald-400' : cot.estatus === 'Expirada' ? 'bg-red-950 text-red-400' : 'bg-amber-950 text-amber-400'}`}>{cot.estatus}</span></td><td className="p-3 text-center"><div className="flex flex-wrap justify-center gap-1.5">{cot.estatus === 'Pendiente' && <><button type="button" onClick={() => autorizarCotizacion(cot)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded font-bold cursor-pointer">✓ Autorizar</button><button type="button" onClick={() => expirarCotizacion(cot)} className="bg-red-700 hover:bg-red-600 text-white px-2.5 py-1 rounded font-bold cursor-pointer">⏱ Expirar</button></>}</div></td></tr>)}</tbody></table></div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* MÓDULO DE VENTAS (POS) CON OPCIÓN DE PAGO A CRÉDITO */}
           {moduloActivo === 'ventas' && verificarPermisoModulo('ventas') && (
             <div className="space-y-6">
