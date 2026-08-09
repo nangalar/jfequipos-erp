@@ -54,6 +54,13 @@ interface StockSucursal {
   existenciaMaxima: number;
 }
 
+interface SerieValidacion {
+  idInterno: string;
+  sku: string;
+  numeroSerie: string;
+  estatus: 'Disponible' | 'Vendida';
+}
+
 interface MovimientoKardex {
   id: number;
   fecha: string;
@@ -199,6 +206,8 @@ interface AuditoriaInventario {
 
 interface ItemVenta {
   id: number;
+  lineaId: string;
+  productoIdCatalogo: number;
   codigo: string;
   nombre: string;
   categoria: string;
@@ -206,6 +215,7 @@ interface ItemVenta {
   costo: number;
   stock: number;
   sucursal: string;
+  requiereSerie: boolean;
   numeroSerie: string;
   cantidadVendida: number;
   esRegalo: boolean;
@@ -293,6 +303,8 @@ const LISTA_MODULOS_DISPONIBLES = [
 
 export default function DashboardPage() {
   const [usuarioLogueado, setUsuarioLogueado] = useState<UsuarioSistema | null>(null);
+  // Evita mostrar la pantalla de login antes de comprobar si existe una sesión guardada.
+  const [sesionCargada, setSesionCargada] = useState<boolean>(false);
   const [emailLogin, setEmailLogin] = useState<string>('');
   const [passwordLogin, setPasswordLogin] = useState<string>('');
   const [vistaRecuperacion, setVistaRecuperacion] = useState<boolean>(false);
@@ -312,6 +324,7 @@ export default function DashboardPage() {
   const [modalPermisosAbierto, setModalPermisosAbierto] = useState<boolean>(false);
 
   const [moduloActivo, setModuloActivo] = useState<string>('inicio');
+  const [menuMovilAbierto, setMenuMovilAbierto] = useState<boolean>(false);
 
   // Catálogo maestro de sucursales. Inicia vacío para que el cliente registre sus ubicaciones reales.
   const [sucursales, setSucursales] = useState<Sucursal[]>([]);
@@ -333,6 +346,8 @@ export default function DashboardPage() {
   const [catalogoProductos, setCatalogoProductos] = useState<ProductoCatalogo[]>([]);
   const [inventarioSucursales, setInventarioSucursales] = useState<StockSucursal[]>([]);
   const [kardexMovimientos, setKardexMovimientos] = useState<MovimientoKardex[]>([]);
+  // Se llenará con la importación del Excel. Permite validar que una serie corresponda al SKU vendido.
+  const [seriesValidacion, setSeriesValidacion] = useState<SerieValidacion[]>([]);
   const [listaCategorias, setListaCategorias] = useState<string[]>(['Cardio', 'Pesas libres', 'Fuerza', 'Accesorios', 'Suplementos', 'Paquetes / Combos', 'Regalos']);
   const [nuevaCategoriaInput, setNuevaCategoriaInput] = useState<string>('');
 
@@ -425,6 +440,8 @@ export default function DashboardPage() {
   const [esRegaloPendiente, setEsRegaloPendiente] = useState<boolean>(false);
   const [stockPendienteSerie, setStockPendienteSerie] = useState<number>(0);
   const [inputNumeroSerieFisico, setInputNumeroSerieFisico] = useState<string>('');
+  const [lineaSerieEditandoId, setLineaSerieEditandoId] = useState<string | null>(null);
+  const [cotizacionOrigenPOS, setCotizacionOrigenPOS] = useState<string | null>(null);
 
   const [gastos, setGastos] = useState<GastoOperativo[]>([]);
   const [modalGastoAbierto, setModalGastoAbierto] = useState<boolean>(false);
@@ -607,6 +624,56 @@ export default function DashboardPage() {
       }
     };
   }, [camaraActiva, camaraAltaActiva, camaraInventarioActiva, camaraAuditoriaActiva]);
+
+  // SESIÓN PERSISTENTE: conserva al usuario autenticado aunque se recargue la página.
+  // Por seguridad no guardamos la contraseña en localStorage.
+  useEffect(() => {
+    try {
+      const sesionGuardada = window.localStorage.getItem('jfequipos_sesion_activa');
+      if (sesionGuardada) {
+        const sesion = JSON.parse(sesionGuardada);
+        if (sesion && sesion.id && sesion.email && sesion.rol) {
+          setUsuarioLogueado({
+            id: Number(sesion.id),
+            nombre: String(sesion.nombre || ''),
+            email: String(sesion.email),
+            password: '',
+            rol: String(sesion.rol),
+            sucursalId: sesion.sucursalId === null || sesion.sucursalId === undefined
+              ? null
+              : Number(sesion.sucursalId),
+            activo: sesion.activo !== false
+          });
+        }
+      }
+    } catch (error) {
+      console.error('No fue posible restaurar la sesión:', error);
+      window.localStorage.removeItem('jfequipos_sesion_activa');
+    } finally {
+      setSesionCargada(true);
+    }
+  }, []);
+
+  const guardarSesionLocal = (usr: UsuarioSistema) => {
+    const sesionSinPassword = {
+      id: usr.id,
+      nombre: usr.nombre,
+      email: usr.email,
+      rol: usr.rol,
+      sucursalId: usr.sucursalId ?? null,
+      activo: usr.activo
+    };
+    window.localStorage.setItem('jfequipos_sesion_activa', JSON.stringify(sesionSinPassword));
+  };
+
+  const cerrarSesion = () => {
+    window.localStorage.removeItem('jfequipos_sesion_activa');
+    setUsuarioLogueado(null);
+    setEmailLogin('');
+    setPasswordLogin('');
+    setModuloActivo('inicio');
+    setMenuMovilAbierto(false);
+  };
 
   // Mantiene sincronizados los selectores operativos con las sucursales que el usuario tiene autorizadas.
   useEffect(() => {
@@ -1434,9 +1501,33 @@ export default function DashboardPage() {
     setPProductosAsociados(pProductosAsociados.filter((_, i) => i !== index));
   };
 
+  const normalizarTextoCatalogo = (valor: string) =>
+    valor.trim().toLocaleLowerCase('es-MX').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
+
+  const validarDuplicadoProducto = (codigo: string, nombre: string, excluirId?: number) => {
+    const codigoNormalizado = codigo.trim().toUpperCase();
+    const nombreNormalizado = normalizarTextoCatalogo(nombre);
+
+    return catalogoProductos.find((p: ProductoCatalogo) => {
+      if (excluirId && p.id === excluirId) return false;
+      const mismoSku = p.codigo.trim().toUpperCase() === codigoNormalizado;
+      const mismoNombre = normalizarTextoCatalogo(p.nombre) === nombreNormalizado;
+      return mismoSku || mismoNombre;
+    }) || null;
+  };
+
   const registrarProductoCatalogo = (e: React.FormEvent) => {
     e.preventDefault();
     if (!fCodigo || !fNombre || !fPVenta) return;
+
+    const duplicado = validarDuplicadoProducto(fCodigo, fNombre);
+    if (duplicado) {
+      const mismoSku = duplicado.codigo.trim().toUpperCase() === fCodigo.trim().toUpperCase();
+      const mismoNombre = normalizarTextoCatalogo(duplicado.nombre) === normalizarTextoCatalogo(fNombre);
+      setMensajeNotif(`⚠️ No se puede registrar el producto. ${mismoSku ? `El SKU ${fCodigo.trim().toUpperCase()} ya existe` : ''}${mismoSku && mismoNombre ? ' y ' : ''}${mismoNombre ? `el nombre "${fNombre.trim()}" ya está registrado` : ''}. Edite el producto existente en lugar de crear un duplicado.`);
+      setModalNotifAbierto(true);
+      return;
+    }
 
     const precioV = Number(fPVenta) || 0;
     const costoV = fPCompra ? Number(fPCompra) : precioV * 0.6;
@@ -1452,7 +1543,8 @@ export default function DashboardPage() {
       marca: fMarca,
       modelo: fModelo,
       manejaSerie: fManejaSerie,
-      numeroSerie: fManejaSerie ? (fSerie.trim() || `SN-${Math.floor(100000 + Math.random() * 900000)}`) : 'N/A',
+      // La serie física NO pertenece al SKU. Se captura al momento de vender la unidad.
+      numeroSerie: 'N/A',
       paisOrigen: fPais,
       proveedor: fProv,
       precioCompra: costoV,
@@ -1497,6 +1589,19 @@ export default function DashboardPage() {
     e.preventDefault();
     if (!productoSeleccionadoEdicion) return;
 
+    const duplicado = validarDuplicadoProducto(
+      productoSeleccionadoEdicion.codigo,
+      productoSeleccionadoEdicion.nombre,
+      productoSeleccionadoEdicion.id
+    );
+    if (duplicado) {
+      const mismoSku = duplicado.codigo.trim().toUpperCase() === productoSeleccionadoEdicion.codigo.trim().toUpperCase();
+      const mismoNombre = normalizarTextoCatalogo(duplicado.nombre) === normalizarTextoCatalogo(productoSeleccionadoEdicion.nombre);
+      setMensajeNotif(`⚠️ No se puede guardar la edición. ${mismoSku ? `El SKU ${productoSeleccionadoEdicion.codigo.trim().toUpperCase()} ya pertenece a otro producto` : ''}${mismoSku && mismoNombre ? ' y ' : ''}${mismoNombre ? `el nombre "${productoSeleccionadoEdicion.nombre.trim()}" ya pertenece a otro producto` : ''}.`);
+      setModalNotifAbierto(true);
+      return;
+    }
+
     setCatalogoProductos((prev: ProductoCatalogo[]) =>
       prev.map((p: ProductoCatalogo) => (p.id === productoSeleccionadoEdicion.id ? productoSeleccionadoEdicion : p))
     );
@@ -1538,11 +1643,82 @@ export default function DashboardPage() {
     setModalNotifAbierto(true);
   };
 
+  const normalizarSerie = (serie: string) => serie.trim().toUpperCase();
+
+  const calcularFechaGarantiaProducto = (producto: ProductoCatalogo) => {
+    if (!producto.manejaGarantia) return 'Sin garantía';
+
+    const fecha = new Date();
+    const texto = (producto.garantia || '').toLowerCase().trim();
+    const numero = Number((texto.match(/\d+/) || ['1'])[0]) || 1;
+
+    if (texto.includes('mes')) {
+      fecha.setMonth(fecha.getMonth() + numero);
+    } else if (texto.includes('día') || texto.includes('dia')) {
+      fecha.setDate(fecha.getDate() + numero);
+    } else {
+      // Si dice año/años o no se reconoce el formato, usamos años.
+      fecha.setFullYear(fecha.getFullYear() + numero);
+    }
+
+    return `${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, '0')}-${String(fecha.getDate()).padStart(2, '0')}`;
+  };
+
+  const buscarSerieVendida = (serie: string) => {
+    const objetivo = normalizarSerie(serie);
+    if (!objetivo) return null;
+
+    for (const ticket of historialTickets) {
+      const item = ticket.items.find((it: ItemVenta) =>
+        it.requiereSerie && normalizarSerie(it.numeroSerie || '') === objetivo
+      );
+      if (item) return { ticket, item };
+    }
+    return null;
+  };
+
+  const buscarSerieEnCotizacionPendiente = (serie: string, excluirFolio?: string | null) => {
+    const objetivo = normalizarSerie(serie);
+    if (!objetivo) return null;
+
+    for (const cot of cotizaciones) {
+      if (cot.estatus !== 'Pendiente') continue;
+      if (excluirFolio && cot.folio === excluirFolio) continue;
+      const item = cot.items.find((it: ItemVenta) =>
+        it.requiereSerie && normalizarSerie(it.numeroSerie || '') === objetivo
+      );
+      if (item) return { cotizacion: cot, item };
+    }
+    return null;
+  };
+
+  const abrirCapturaSerieCarrito = (lineaId: string) => {
+    const item = carrito.find((it: ItemVenta) => it.lineaId === lineaId);
+    if (!item || !item.requiereSerie) return;
+
+    const prod = catalogoProductos.find((p: ProductoCatalogo) => p.id === item.productoIdCatalogo) || null;
+    setProductoPendienteSerie(prod);
+    setLineaSerieEditandoId(lineaId);
+    setInputNumeroSerieFisico(item.numeroSerie && item.numeroSerie !== 'PENDIENTE' ? item.numeroSerie : '');
+    setModalSerieAbierto(true);
+  };
+
   const handleEscaneoDirecto = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!sucursalActivaPOS) {
+      setMensajeNotif('Seleccione una sucursal activa antes de agregar productos a la venta.');
+      setModalNotifAbierto(true);
+      return;
+    }
+
+    const termino = busquedaTexto.trim().toLowerCase();
     const prod = catalogoProductos.find(
-      (p: ProductoCatalogo) => p.codigo.toLowerCase() === busquedaTexto.trim().toLowerCase()
+      (p: ProductoCatalogo) =>
+        p.codigo.toLowerCase() === termino ||
+        p.claveInterna.toLowerCase() === termino ||
+        p.nombre.toLowerCase() === termino
     );
+
     if (prod) {
       const stockDisp = obtenerStockSucursal(prod.id, sucursalActivaPOS);
       if (stockDisp <= 0 && !prod.esRegalo) {
@@ -1552,16 +1728,12 @@ export default function DashboardPage() {
         return;
       }
 
-      if (prod.manejaSerie) {
-        setProductoPendienteSerie(prod);
-        setEsRegaloPendiente(false);
-        setStockPendienteSerie(stockDisp);
-        setInputNumeroSerieFisico(`SN-${Math.floor(100000 + Math.random() * 900000)}`);
-        setModalSerieAbierto(true);
-      } else if (prod.esPaqueteDefinido && prod.componentesPaquete) {
+      if (prod.esPaqueteDefinido && prod.componentesPaquete) {
         agregarPaqueteAlCarrito(prod, stockDisp);
       } else {
-        agregarAlCarrito(prod, prod.esRegalo || false, stockDisp, 'N/A');
+        // Para productos serializados se agrega una unidad con serie PENDIENTE.
+        // La serie real se captura cuando se prepara/cobra la venta.
+        agregarAlCarrito(prod, prod.esRegalo || false, stockDisp, '');
       }
       setBusquedaTexto('');
     }
@@ -1569,37 +1741,103 @@ export default function DashboardPage() {
 
   const confirmarNumeroSerieModal = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!productoPendienteSerie) return;
+    if (!lineaSerieEditandoId) return;
 
-    if (productoPendienteSerie.esPaqueteDefinido && productoPendienteSerie.componentesPaquete) {
-      agregarPaqueteAlCarrito(productoPendienteSerie, stockPendienteSerie);
-    } else {
-      agregarAlCarrito(productoPendienteSerie, esRegaloPendiente, stockPendienteSerie, inputNumeroSerieFisico || 'SN-PENDIENTE');
+    const serie = normalizarSerie(inputNumeroSerieFisico);
+    if (!serie) {
+      setMensajeNotif('Capture o escanee el número de serie físico del equipo antes de continuar.');
+      setModalNotifAbierto(true);
+      return;
     }
 
+    const lineaActual = carrito.find((it: ItemVenta) => it.lineaId === lineaSerieEditandoId);
+    if (!lineaActual) return;
+
+    const duplicadaEnCarrito = carrito.find((it: ItemVenta) =>
+      it.lineaId !== lineaSerieEditandoId &&
+      it.requiereSerie &&
+      normalizarSerie(it.numeroSerie || '') === serie
+    );
+    if (duplicadaEnCarrito) {
+      setMensajeNotif(`⚠️ La serie ${serie} ya está asignada a otro artículo de esta misma venta.`);
+      setModalNotifAbierto(true);
+      return;
+    }
+
+    const ventaAnterior = buscarSerieVendida(serie);
+    if (ventaAnterior) {
+      setMensajeNotif(`⚠️ La serie ${serie} ya fue vendida anteriormente. Ticket: ${ventaAnterior.ticket.folio} | Cliente: ${ventaAnterior.ticket.cliente} | Fecha: ${ventaAnterior.ticket.fecha}. No puede utilizarse nuevamente.`);
+      setModalNotifAbierto(true);
+      return;
+    }
+
+    const cotizacionPendiente = buscarSerieEnCotizacionPendiente(serie, cotizacionOrigenPOS);
+    if (cotizacionPendiente) {
+      setMensajeNotif(`⚠️ La serie ${serie} ya está reservada en la cotización pendiente ${cotizacionPendiente.cotizacion.folio} para ${cotizacionPendiente.cotizacion.cliente}. No puede asignarse a otra operación mientras esa cotización siga pendiente.`);
+      setModalNotifAbierto(true);
+      return;
+    }
+
+    // Si ya existe un catálogo maestro de series (se cargará desde Excel), valida SKU ↔ serie.
+    const seriesDelSku = seriesValidacion.filter((reg: SerieValidacion) =>
+      reg.sku.trim().toUpperCase() === lineaActual.codigo.trim().toUpperCase()
+    );
+    if (seriesDelSku.length > 0) {
+      const registroSerie = seriesDelSku.find((reg: SerieValidacion) => normalizarSerie(reg.numeroSerie) === serie);
+      if (!registroSerie) {
+        setMensajeNotif(`⚠️ La serie ${serie} no corresponde al SKU ${lineaActual.codigo}. Verifique físicamente el equipo que se entregará.`);
+        setModalNotifAbierto(true);
+        return;
+      }
+      if (registroSerie.estatus === 'Vendida') {
+        setMensajeNotif(`⚠️ La serie ${serie} ya está marcada como VENDIDA en el catálogo maestro y no puede asignarse nuevamente.`);
+        setModalNotifAbierto(true);
+        return;
+      }
+    }
+
+    setCarrito((prev: ItemVenta[]) => prev.map((it: ItemVenta) =>
+      it.lineaId === lineaSerieEditandoId ? { ...it, numeroSerie: serie } : it
+    ));
+
     setModalSerieAbierto(false);
+    setLineaSerieEditandoId(null);
+    setInputNumeroSerieFisico('');
     setProductoPendienteSerie(null);
   };
 
-  const agregarAlCarrito = (producto: ProductoCatalogo, esRegalo: boolean = false, stockDisp: number, serieFisica: string) => {
+  const agregarAlCarrito = (producto: ProductoCatalogo, esRegalo: boolean = false, stockDisp: number, serieFisica: string = '') => {
     setVentaExitosa(false);
     setCarrito((prev: ItemVenta[]) => {
-      const existe = prev.find((item: ItemVenta) => item.id === producto.id && !item.esPaqueteComponente && item.esRegalo === esRegalo && item.sucursal === sucursalActivaPOS);
-      if (existe) {
-        if (!esRegalo && existe.cantidadVendida >= stockDisp) return prev;
-        return prev.map((item: ItemVenta) =>
-          item.id === producto.id && !item.esPaqueteComponente && item.esRegalo === esRegalo && item.sucursal === sucursalActivaPOS
-            ? { ...item, cantidadVendida: item.cantidadVendida + 1 }
-            : item
-        );
-      }
+      const unidadesYaEnCarrito = prev
+        .filter((item: ItemVenta) => item.id === producto.id && !item.esPaqueteComponente && item.sucursal === sucursalActivaPOS)
+        .reduce((acc: number, item: ItemVenta) => acc + item.cantidadVendida, 0);
 
-      const fechaHoy = new Date();
-      const anioVencimiento = fechaHoy.getFullYear() + 1;
-      const fechaGarantiaStr = `${anioVencimiento}-${String(fechaHoy.getMonth() + 1).padStart(2, '0')}-${String(fechaHoy.getDate()).padStart(2, '0')}`;
+      if (!esRegalo && unidadesYaEnCarrito >= stockDisp) return prev;
+
+      // Los artículos serializados deben permanecer en líneas independientes, una serie por unidad.
+      if (!producto.manejaSerie) {
+        const existe = prev.find((item: ItemVenta) =>
+          item.id === producto.id &&
+          !item.esPaqueteComponente &&
+          !item.requiereSerie &&
+          item.esRegalo === esRegalo &&
+          item.sucursal === sucursalActivaPOS
+        );
+
+        if (existe) {
+          return prev.map((item: ItemVenta) =>
+            item.lineaId === existe.lineaId
+              ? { ...item, cantidadVendida: item.cantidadVendida + 1 }
+              : item
+          );
+        }
+      }
 
       const nuevoItem: ItemVenta = {
         id: producto.id,
+        lineaId: `${producto.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        productoIdCatalogo: producto.id,
         codigo: producto.codigo,
         nombre: producto.nombre,
         categoria: producto.categoria,
@@ -1607,12 +1845,13 @@ export default function DashboardPage() {
         costo: producto.costoPromedio || producto.precioCompra || 0,
         stock: stockDisp,
         sucursal: sucursalActivaPOS,
-        numeroSerie: serieFisica,
+        requiereSerie: producto.manejaSerie,
+        numeroSerie: producto.manejaSerie ? normalizarSerie(serieFisica) : 'N/A',
         cantidadVendida: 1,
         esRegalo: Boolean(esRegalo),
         esPaqueteComponente: false,
         descuentoMontoFijo: 0.00,
-        fechaGarantia: producto.manejaGarantia ? fechaGarantiaStr : 'Sin garantía'
+        fechaGarantia: calcularFechaGarantiaProducto(producto)
       };
       return [...prev, nuevoItem];
     });
@@ -1627,62 +1866,78 @@ export default function DashboardPage() {
 
     setVentaExitosa(false);
     if (!paquete.componentesPaquete) return;
+
+    const paquetesYaEnCarrito = carrito
+      .filter((it: ItemVenta) => it.nombrePaqueteOrigen === paquete.nombre && it.sucursal === sucursalActivaPOS)
+      .length > 0
+      ? 1
+      : 0;
+    if (paquetesYaEnCarrito >= stockDisp) {
+      setMensajeSinStock(`No hay más existencias disponibles del paquete "${paquete.nombre}" en ${sucursalActivaPOS}.`);
+      setModalSinStockAbierto(true);
+      return;
+    }
     
     const sumaLista = paquete.componentesPaquete.reduce((acc, c) => acc + (c.precioLista || 0), 0);
     const factorProporcional = sumaLista > 0 ? (paquete.precio || 0) / sumaLista : 1;
 
-    const fechaHoy = new Date();
-    const anioVencimiento = fechaHoy.getFullYear() + 1;
-    const fechaGarantiaStr = `${anioVencimiento}-${String(fechaHoy.getMonth() + 1).padStart(2, '0')}-${String(fechaHoy.getDate()).padStart(2, '0')}`;
-
     setCarrito((prev: ItemVenta[]) => {
-      let nuevoCarrito = [...prev];
+      const nuevoCarrito = [...prev];
       paquete.componentesPaquete!.forEach((comp) => {
         const precioProporcional = (comp.precioLista || 0) * factorProporcional;
-        let serieComp = `SN-COMP-${Math.floor(1000 + Math.random() * 9000)}`;
+        const prodComponente = catalogoProductos.find((p: ProductoCatalogo) => p.id === comp.productoId);
+        const requiereSerie = Boolean(prodComponente?.manejaSerie);
         
         nuevoCarrito.push({
           id: paquete.id * 100 + comp.productoId,
-          codigo: `${paquete.codigo}-${comp.productoId}`,
+          lineaId: `paq-${paquete.id}-${comp.productoId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          productoIdCatalogo: comp.productoId,
+          codigo: prodComponente?.codigo || `${paquete.codigo}-${comp.productoId}`,
           nombre: comp.nombre,
           categoria: 'Paquetes / Combos',
           precio: precioProporcional,
-          costo: precioProporcional * 0.6,
+          costo: prodComponente?.costoPromedio || prodComponente?.precioCompra || precioProporcional * 0.6,
           stock: stockDisp,
           sucursal: sucursalActivaPOS,
-          numeroSerie: serieComp,
+          requiereSerie,
+          numeroSerie: requiereSerie ? '' : 'N/A',
           cantidadVendida: 1,
           esRegalo: false,
           esPaqueteComponente: true,
           nombrePaqueteOrigen: paquete.nombre,
           precioListaOriginal: comp.precioLista,
           descuentoMontoFijo: 0.00,
-          fechaGarantia: fechaGarantiaStr
+          fechaGarantia: prodComponente ? calcularFechaGarantiaProducto(prodComponente) : 'Sin garantía'
         });
       });
       return nuevoCarrito;
     });
   };
 
-  const cambiarCantidad = (id: number, sucursalItem: string, esPaqueteComponente: boolean, esRegalo: boolean, delta: number) => {
+  const cambiarCantidad = (lineaId: string, delta: number) => {
     setCarrito((prev: ItemVenta[]) =>
       prev
         .map((item: ItemVenta) => {
-          if (item.id === id && item.sucursal === sucursalItem && item.esPaqueteComponente === esPaqueteComponente && item.esRegalo === esRegalo) {
-            const nueva = item.cantidadVendida + delta;
-            return nueva > 0 ? { ...item, cantidadVendida: nueva } : null;
-          }
-          return item;
+          if (item.lineaId !== lineaId) return item;
+          if (item.requiereSerie) return item;
+
+          const nueva = item.cantidadVendida + delta;
+          if (nueva > item.stock && !item.esRegalo) return item;
+          return nueva > 0 ? { ...item, cantidadVendida: nueva } : null;
         })
         .filter(Boolean) as ItemVenta[]
     );
   };
 
-  const cambiarDescuentoMonto = (id: number, sucursalItem: string, esPaqueteComponente: boolean, esRegalo: boolean, valorTexto: string) => {
+  const quitarLineaCarrito = (lineaId: string) => {
+    setCarrito((prev: ItemVenta[]) => prev.filter((item: ItemVenta) => item.lineaId !== lineaId));
+  };
+
+  const cambiarDescuentoMonto = (lineaId: string, valorTexto: string) => {
     const monto = valorTexto === '' ? 0.00 : Number(valorTexto);
     setCarrito((prev: ItemVenta[]) =>
       prev.map((item: ItemVenta) =>
-        item.id === id && item.sucursal === sucursalItem && item.esPaqueteComponente === esPaqueteComponente && item.esRegalo === esRegalo
+        item.lineaId === lineaId
           ? { ...item, descuentoMontoFijo: Math.max(0.00, monto) }
           : item
       )
@@ -1718,15 +1973,23 @@ export default function DashboardPage() {
   };
 
   const calcularTotal = () => {
-    const subNeto = calcularSubtotalNeto();
-    const iva = subNeto * 0.16;
+    // Los precios capturados en el catálogo YA INCLUYEN IVA.
+    // El IVA se obtiene únicamente como dato informativo y nunca se vuelve a sumar al total.
+    const totalConIva = calcularSubtotalNeto();
+    const ivaIncluido = totalConIva - (totalConIva / 1.16);
     return {
       subtotalBruto: calcularSubtotalSinDescuento(),
       descuentoTotal: calcularTotalDescuentos(),
-      subtotalNeto: subNeto,
-      iva,
-      total: subNeto + iva
+      subtotalNeto: totalConIva,
+      iva: ivaIncluido,
+      total: totalConIva
     };
+  };
+
+  const cantidadItemsPorProducto = (items: ItemVenta[], productoId: number, sucursal: string) => {
+    return items
+      .filter((it: ItemVenta) => it.id === productoId && it.sucursal === sucursal && !it.esPaqueteComponente)
+      .reduce((acc: number, it: ItemVenta) => acc + (it.cantidadVendida || 0), 0);
   };
 
   const generarCotizacion = () => {
@@ -1741,21 +2004,57 @@ export default function DashboardPage() {
       setModalNotifAbierto(true);
       return;
     }
+
+    // Si se capturaron series antes de cotizar, deben ser únicas y no estar vendidas ni reservadas.
+    const seriesCotizacion = carrito
+      .filter((it: ItemVenta) => it.requiereSerie && normalizarSerie(it.numeroSerie || ''))
+      .map((it: ItemVenta) => normalizarSerie(it.numeroSerie));
+
+    const serieDuplicadaCot = seriesCotizacion.find((serie: string, index: number) => seriesCotizacion.indexOf(serie) !== index);
+    if (serieDuplicadaCot) {
+      setMensajeNotif(`⚠️ No se puede generar la cotización. La serie ${serieDuplicadaCot} está repetida dentro de la misma cotización.`);
+      setModalNotifAbierto(true);
+      return;
+    }
+
+    for (const serie of seriesCotizacion) {
+      const ventaAnterior = buscarSerieVendida(serie);
+      if (ventaAnterior) {
+        setMensajeNotif(`⚠️ No se puede cotizar la serie ${serie} porque ya fue vendida en el ticket ${ventaAnterior.ticket.folio}.`);
+        setModalNotifAbierto(true);
+        return;
+      }
+      const cotPendiente = buscarSerieEnCotizacionPendiente(serie, cotizacionOrigenPOS);
+      if (cotPendiente) {
+        setMensajeNotif(`⚠️ No se puede cotizar la serie ${serie} porque ya está reservada en la cotización pendiente ${cotPendiente.cotizacion.folio}.`);
+        setModalNotifAbierto(true);
+        return;
+      }
+    }
+
     const { total } = calcularTotal();
 
     const ahora = new Date();
     const fechaCreacionStr = ahora.toLocaleString();
     const expiracionDate = new Date(ahora.getTime() + 48 * 60 * 60 * 1000);
 
+    // La cotización reserva cantidad, no números de serie físicos.
     setInventarioSucursales((prevInv: StockSucursal[]) =>
       prevInv.map((inv: StockSucursal) => {
-        const itemCot = carrito.find(it => it.id === inv.productoId && inv.sucursal === sucursalActivaPOS && !it.esPaqueteComponente);
-        if (itemCot) {
-          return { ...inv, stockActual: Math.max(0, inv.stockActual - itemCot.cantidadVendida) };
+        const cantidadReservada = cantidadItemsPorProducto(carrito, inv.productoId, sucursalActivaPOS);
+        if (cantidadReservada > 0) {
+          return { ...inv, stockActual: Math.max(0, inv.stockActual - cantidadReservada) };
         }
         return inv;
       })
     );
+
+    const itemsCotizacion = carrito.map((it: ItemVenta) => ({
+      ...it,
+      // La serie no es obligatoria para cotizar. Si el usuario ya identificó físicamente
+      // una unidad y capturó su serie, se conserva y queda reservada por esta cotización.
+      numeroSerie: it.requiereSerie ? normalizarSerie(it.numeroSerie || '') : it.numeroSerie
+    }));
 
     const nuevaCotizacion: Cotizacion = {
       folio: `COT-${Math.floor(100000 + Math.random() * 900000)}`,
@@ -1763,14 +2062,15 @@ export default function DashboardPage() {
       fechaExpiracion: expiracionDate.toLocaleString(),
       cliente: clienteSeleccionadoPOS,
       sucursal: sucursalActivaPOS,
-      items: [...carrito],
+      items: itemsCotizacion,
       total,
       estatus: 'Pendiente'
     };
 
     setCotizaciones(prev => [nuevaCotizacion, ...prev]);
     setCarrito([]);
-    setMensajeNotif(`¡Cotización ${nuevaCotizacion.folio} generada con éxito! El inventario ha sido reservado por 48 horas.`);
+    setCotizacionOrigenPOS(null);
+    setMensajeNotif(`¡Cotización ${nuevaCotizacion.folio} generada con éxito! El inventario quedó reservado por 48 horas. Las series físicas se capturarán únicamente al concretar la venta.`);
     setModalNotifAbierto(true);
   };
 
@@ -1782,27 +2082,23 @@ export default function DashboardPage() {
       return;
     }
 
-    const ticketInfo: TicketGuardado = {
-      folio: `TICK-${cot.folio.replace('COT-', '')}`,
-      fecha: new Date().toLocaleString(),
-      cliente: cot.cliente,
-      metodoPago: 'Efectivo (Cotización Autorizada)',
-      sucursal: cot.sucursal,
-      items: cot.items,
-      subtotalBruto: cot.total / 1.16,
-      descuentoTotal: 0,
-      subtotalNeto: cot.total / 1.16,
-      iva: cot.total - (cot.total / 1.16),
-      total: cot.total
-    };
+    const itemsParaVenta = cot.items.map((it: ItemVenta, index: number) => ({
+      ...it,
+      lineaId: it.lineaId || `cot-${cot.folio}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+      productoIdCatalogo: it.productoIdCatalogo || it.id,
+      requiereSerie: Boolean(it.requiereSerie),
+      // Si la cotización ya reservó una serie, se conserva al pasar a Venta.
+      // Si no tenía serie, se captura físicamente antes de cobrar.
+      numeroSerie: it.requiereSerie ? normalizarSerie(it.numeroSerie || '') : (it.numeroSerie || 'N/A')
+    }));
 
-    setTicketGenerado(ticketInfo);
-    setHistorialTickets((prev: TicketGuardado[]) => [ticketInfo, ...prev]);
-    setVentaExitosa(true);
-
-    setCotizaciones(prev => prev.map(c => c.folio === cot.folio ? { ...c, estatus: 'Autorizada' } : c));
+    setCarrito(itemsParaVenta);
+    setClienteSeleccionadoPOS(cot.cliente);
+    setSucursalActivaPOS(cot.sucursal);
+    setCotizacionOrigenPOS(cot.folio);
+    setVentaExitosa(false);
     setModuloActivo('ventas');
-    setMensajeNotif(`¡Cotización ${cot.folio} autorizada y pasada a ventas con éxito!`);
+    setMensajeNotif(`Cotización ${cot.folio} cargada en Ventas. El stock ya está reservado; capture las series físicas de los equipos y después presione Cobrar Directo.`);
     setModalNotifAbierto(true);
   };
 
@@ -1816,15 +2112,19 @@ export default function DashboardPage() {
 
     setInventarioSucursales((prevInv: StockSucursal[]) =>
       prevInv.map((inv: StockSucursal) => {
-        const itemCot = cot.items.find(it => it.id === inv.productoId && inv.sucursal === cot.sucursal && !it.esPaqueteComponente);
-        if (itemCot) {
-          return { ...inv, stockActual: inv.stockActual + itemCot.cantidadVendida };
+        const cantidadRegresar = cantidadItemsPorProducto(cot.items, inv.productoId, cot.sucursal);
+        if (cantidadRegresar > 0) {
+          return { ...inv, stockActual: inv.stockActual + cantidadRegresar };
         }
         return inv;
       })
     );
 
     setCotizaciones(prev => prev.map(c => c.folio === cot.folio ? { ...c, estatus: 'Expirada' } : c));
+    if (cotizacionOrigenPOS === cot.folio) {
+      setCarrito([]);
+      setCotizacionOrigenPOS(null);
+    }
     setMensajeNotif(`La cotización ${cot.folio} ha expirado y el stock ha sido regresado al inventario.`);
     setModalNotifAbierto(true);
   };
@@ -1841,7 +2141,45 @@ export default function DashboardPage() {
       setModalNotifAbierto(true);
       return;
     }
+
+    // 1) Toda unidad serializada debe tener una serie física antes del cobro.
+    const lineaSinSerie = carrito.find((it: ItemVenta) => it.requiereSerie && !normalizarSerie(it.numeroSerie || ''));
+    if (lineaSinSerie) {
+      abrirCapturaSerieCarrito(lineaSinSerie.lineaId);
+      setMensajeNotif(`El artículo "${lineaSinSerie.nombre}" requiere capturar o escanear su número de serie físico antes de cobrar.`);
+      setModalNotifAbierto(true);
+      return;
+    }
+
+    // 2) Validación defensiva: no repetir series en la misma venta.
+    const seriesVenta = carrito
+      .filter((it: ItemVenta) => it.requiereSerie)
+      .map((it: ItemVenta) => normalizarSerie(it.numeroSerie));
+    const serieDuplicada = seriesVenta.find((serie: string, index: number) => seriesVenta.indexOf(serie) !== index);
+    if (serieDuplicada) {
+      setMensajeNotif(`⚠️ La serie ${serieDuplicada} está repetida dentro de la venta. Corrija la serie antes de cobrar.`);
+      setModalNotifAbierto(true);
+      return;
+    }
+
+    // 3) No permitir vender nuevamente una serie ya vendida ni una serie reservada en otra cotización pendiente.
+    for (const serie of seriesVenta) {
+      const ventaAnterior = buscarSerieVendida(serie);
+      if (ventaAnterior) {
+        setMensajeNotif(`⚠️ La serie ${serie} ya fue vendida. Ticket: ${ventaAnterior.ticket.folio} | Cliente: ${ventaAnterior.ticket.cliente} | Fecha: ${ventaAnterior.ticket.fecha}.`);
+        setModalNotifAbierto(true);
+        return;
+      }
+      const cotPendiente = buscarSerieEnCotizacionPendiente(serie, cotizacionOrigenPOS);
+      if (cotPendiente) {
+        setMensajeNotif(`⚠️ La serie ${serie} está reservada en la cotización pendiente ${cotPendiente.cotizacion.folio}. No puede venderse en otra operación.`);
+        setModalNotifAbierto(true);
+        return;
+      }
+    }
+
     const { subtotalBruto, descuentoTotal, subtotalNeto, iva, total } = calcularTotal();
+    const folioTicket = `TICK-${Math.floor(100000 + Math.random() * 900000)}`;
     
     const clienteObj = clientes.find(c => c.nombreComercial === clienteSeleccionadoPOS);
     if (metodoPagoSeleccionado === 'Crédito' && clienteObj) {
@@ -1858,30 +2196,55 @@ export default function DashboardPage() {
       }
     }
 
-    setInventarioSucursales((prevInv: StockSucursal[]) =>
-      prevInv.map((inv: StockSucursal) => {
-        const vendido = carrito.find((it: ItemVenta) => it.id === inv.productoId && inv.sucursal === sucursalActivaPOS && !it.esPaqueteComponente);
-        if (vendido) {
-          const existAnt = inv.stockActual;
-          const existPost = Math.max(0, existAnt - vendido.cantidadVendida);
-          const prodObj = catalogoProductos.find(p => p.id === inv.productoId);
-          registrarMovimientoKardex(
-            prodObj ? prodObj.nombre : 'Producto',
-            inv.sucursal,
-            inv.almacen,
-            vendido.cantidadVendida,
-            'Venta',
-            existAnt,
-            existPost,
-            prodObj ? prodObj.costoPromedio : 0,
-            `Venta POS Folio Ticket`,
-            `Cliente: ${clienteSeleccionadoPOS}`
-          );
-          return { ...inv, stockActual: existPost };
-        }
-        return inv;
-      })
-    );
+    // Una venta proveniente de cotización NO vuelve a descontar inventario: ya estaba reservado.
+    if (!cotizacionOrigenPOS) {
+      setInventarioSucursales((prevInv: StockSucursal[]) =>
+        prevInv.map((inv: StockSucursal) => {
+          const cantidadVendida = cantidadItemsPorProducto(carrito, inv.productoId, sucursalActivaPOS);
+          if (cantidadVendida > 0) {
+            const existAnt = inv.stockActual;
+            const existPost = Math.max(0, existAnt - cantidadVendida);
+            const prodObj = catalogoProductos.find(p => p.id === inv.productoId);
+            registrarMovimientoKardex(
+              prodObj ? prodObj.nombre : 'Producto',
+              inv.sucursal,
+              inv.almacen,
+              cantidadVendida,
+              'Venta',
+              existAnt,
+              existPost,
+              prodObj ? prodObj.costoPromedio : 0,
+              `Venta POS ${folioTicket}`,
+              `Cliente: ${clienteSeleccionadoPOS}`
+            );
+            return { ...inv, stockActual: existPost };
+          }
+          return inv;
+        })
+      );
+    } else {
+      // Aunque el stock ya estaba reservado, registramos la salida definitiva en Kardex.
+      const productosProcesados = new Set<number>();
+      carrito.forEach((it: ItemVenta) => {
+        if (it.esPaqueteComponente || productosProcesados.has(it.id)) return;
+        productosProcesados.add(it.id);
+        const cantidadVendida = cantidadItemsPorProducto(carrito, it.id, sucursalActivaPOS);
+        const inv = inventarioSucursales.find((x: StockSucursal) => x.productoId === it.id && x.sucursal === sucursalActivaPOS);
+        const prodObj = catalogoProductos.find(p => p.id === it.id);
+        registrarMovimientoKardex(
+          prodObj ? prodObj.nombre : it.nombre,
+          sucursalActivaPOS,
+          inv?.almacen || '',
+          cantidadVendida,
+          'Venta',
+          (inv?.stockActual || 0) + cantidadVendida,
+          inv?.stockActual || 0,
+          prodObj ? prodObj.costoPromedio : 0,
+          `Venta desde ${cotizacionOrigenPOS} / ${folioTicket}`,
+          `Cliente: ${clienteSeleccionadoPOS}`
+        );
+      });
+    }
 
     if (metodoPagoSeleccionado === 'Crédito' && clienteObj) {
       const fechaHoyStr = new Date().toISOString().split('T')[0];
@@ -1892,7 +2255,7 @@ export default function DashboardPage() {
 
       const nuevaCxC: CuentaPorCobrar = {
         id: Date.now(),
-        folioVenta: `TICK-${Math.floor(100000 + Math.random() * 900000)}`,
+        folioVenta: folioTicket,
         clienteId: clienteObj.id,
         clienteNombre: clienteObj.nombreComercial,
         fechaEmision: fechaHoyStr,
@@ -1912,12 +2275,15 @@ export default function DashboardPage() {
     }
 
     const ticketInfo: TicketGuardado = {
-      folio: `TICK-${Math.floor(100000 + Math.random() * 900000)}`,
+      folio: folioTicket,
       fecha: new Date().toLocaleString(),
       cliente: clienteSeleccionadoPOS,
       metodoPago: metodoPagoSeleccionado,
       sucursal: sucursalActivaPOS,
-      items: [...carrito],
+      items: carrito.map((it: ItemVenta) => ({
+        ...it,
+        numeroSerie: it.requiereSerie ? normalizarSerie(it.numeroSerie) : 'N/A'
+      })),
       subtotalBruto,
       descuentoTotal,
       subtotalNeto,
@@ -1927,7 +2293,18 @@ export default function DashboardPage() {
 
     setTicketGenerado(ticketInfo);
     setHistorialTickets((prev: TicketGuardado[]) => [ticketInfo, ...prev]);
+    if (seriesVenta.length > 0) {
+      setSeriesValidacion((prev: SerieValidacion[]) => prev.map((reg: SerieValidacion) =>
+        seriesVenta.includes(normalizarSerie(reg.numeroSerie)) ? { ...reg, estatus: 'Vendida' } : reg
+      ));
+    }
     setVentaExitosa(true);
+
+    if (cotizacionOrigenPOS) {
+      setCotizaciones(prev => prev.map(c => c.folio === cotizacionOrigenPOS ? { ...c, estatus: 'Autorizada' } : c));
+      setCotizacionOrigenPOS(null);
+    }
+
     setCarrito([]);
   };
 
@@ -1971,7 +2348,7 @@ export default function DashboardPage() {
       htmlContenido += `
         <div>${idx + 1}. ${it.cantidadVendida}x ${it.nombre}</div>
         <div class="flex"><span>Precio:</span><span>${formatearMoneda(unitFinal * it.cantidadVendida)}</span></div>
-        ${it.numeroSerie !== 'N/A' ? `<div>📌 N/S: ${it.numeroSerie}</div>` : ''}
+        ${it.requiereSerie && it.numeroSerie ? `<div>📌 N/S: ${it.numeroSerie}</div>` : ''}
         ${it.fechaGarantia !== 'Sin garantía' ? `<div>🛡️ Garantía: ${it.fechaGarantia}</div>` : ''}
         <br>
       `;
@@ -1981,7 +2358,7 @@ export default function DashboardPage() {
           <div class="linea"></div>
           <div class="flex"><span>Subtotal Bruto:</span><span>${formatearMoneda(ticket.subtotalBruto)}</span></div>
           <div class="flex"><span>Descuentos:</span><span>-${formatearMoneda(ticket.descuentoTotal)}</span></div>
-          <div class="flex"><span>IVA (16%):</span><span>${formatearMoneda(ticket.iva)}</span></div>
+          <div class="flex"><span>IVA incluido (16%):</span><span>${formatearMoneda(ticket.iva)}</span></div>
           <div class="linea"></div>
           <div class="flex bold" style="font-size: 14px;"><span>TOTAL A PAGAR:</span><span>${formatearMoneda(ticket.total)}</span></div>
           <div class="linea"></div>
@@ -2216,6 +2593,18 @@ export default function DashboardPage() {
 
   const { subtotalBruto, descuentoTotal, subtotalNeto, iva, total } = calcularTotal();
 
+  // Mientras comprobamos localStorage evitamos el "parpadeo" de la pantalla de login.
+  if (!sesionCargada) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4">
+        <div className="text-center">
+          <div className="text-blue-400 font-black text-xl tracking-wider">JF EQUIPOS ERP</div>
+          <div className="text-slate-500 text-xs mt-2">Restaurando sesión...</div>
+        </div>
+      </div>
+    );
+  }
+
   // Pantalla de Autenticación / Login
   if (!usuarioLogueado) {
     return (
@@ -2251,6 +2640,7 @@ export default function DashboardPage() {
                   setSucursalReporte(sucursalUsr.nombre);
                 }
 
+                guardarSesionLocal(usr);
                 setUsuarioLogueado(usr);
                 const rolRefLogin = rolesSistema.find(r => r.nombreRol === usr.rol);
                 const primerModulo = usr.rol === 'Administrador'
@@ -2334,6 +2724,49 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex">
+      {/* MENÚ MÓVIL */}
+      {menuMovilAbierto && (
+        <div className="fixed inset-0 z-[70] md:hidden">
+          <button
+            type="button"
+            aria-label="Cerrar menú"
+            onClick={() => setMenuMovilAbierto(false)}
+            className="absolute inset-0 bg-black/70 w-full h-full cursor-pointer"
+          />
+          <aside className="absolute left-0 top-0 bottom-0 w-[86%] max-w-xs bg-slate-900 border-r border-slate-700 shadow-2xl flex flex-col">
+            <div className="p-5 border-b border-slate-800 flex items-start justify-between gap-3">
+              <div>
+                <h1 className="text-lg font-black text-blue-400 tracking-wider">JF EQUIPOS</h1>
+                <p className="text-xs text-slate-500 mt-1">Rol: <span className="text-amber-400 font-bold">{usuarioLogueado.rol}</span></p>
+                <p className="text-[10px] text-slate-500 mt-1">Sucursal: <span className="text-emerald-400 font-bold">{usuarioEsAdministrador ? 'Todas' : (nombreSucursalAsignadaUsuario || 'Sin asignar')}</span></p>
+              </div>
+              <button type="button" onClick={() => setMenuMovilAbierto(false)} className="bg-slate-800 border border-slate-700 text-white rounded-lg px-3 py-2 text-sm cursor-pointer">✕</button>
+            </div>
+
+            <nav className="p-3 space-y-1.5 overflow-y-auto flex-1">
+              {LISTA_MODULOS_DISPONIBLES
+                .filter((mod) => verificarPermisoModulo(mod.id) && (mod.id !== 'usuarios' || usuarioLogueado.rol === 'Administrador'))
+                .map((mod) => (
+                  <button
+                    key={mod.id}
+                    type="button"
+                    onClick={() => { setModuloActivo(mod.id); setMenuMovilAbierto(false); }}
+                    className={`w-full text-left px-4 py-3 rounded-xl font-medium text-sm cursor-pointer ${moduloActivo === mod.id ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-300 hover:bg-slate-800'}`}
+                  >
+                    {mod.nombre}
+                  </button>
+                ))}
+            </nav>
+
+            <div className="p-4 border-t border-slate-800">
+              <button type="button" onClick={cerrarSesion} className="w-full bg-red-950/60 border border-red-800 text-red-300 font-bold py-3 rounded-xl text-xs cursor-pointer">
+                Cerrar Sesión ({usuarioLogueado.nombre})
+              </button>
+            </div>
+          </aside>
+        </div>
+      )}
+
       {/* Sidebar Corporativo Dinámico por Roles */}
       <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col justify-between hidden md:flex">
         <div>
@@ -2396,7 +2829,7 @@ export default function DashboardPage() {
         </div>
 
         <div className="p-4 border-t border-slate-800">
-          <button type="button" onClick={() => setUsuarioLogueado(null)} className="w-full bg-red-950/60 hover:bg-red-900 border border-red-800 text-red-300 font-bold py-2 rounded-xl text-xs cursor-pointer">
+          <button type="button" onClick={cerrarSesion} className="w-full bg-red-950/60 hover:bg-red-900 border border-red-800 text-red-300 font-bold py-2 rounded-xl text-xs cursor-pointer">
             Cerrar Sesión ({usuarioLogueado.nombre})
           </button>
         </div>
@@ -2404,14 +2837,24 @@ export default function DashboardPage() {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0">
-        <header className="h-16 bg-slate-900/50 border-b border-slate-800 px-8 flex items-center justify-between">
-          <h2 className="text-lg font-bold text-white capitalize">
-            Módulo: {moduloActivo === 'inicio' ? 'Panel General' : moduloActivo === 'cxc' ? 'Cuentas por Cobrar (CxC)' : moduloActivo === 'cxp' ? 'Cuentas por Pagar' : moduloActivo === 'gastos' ? 'Gastos Operativos' : moduloActivo === 'reportes' ? 'Reportes Financieros' : moduloActivo === 'auditoria' ? 'Auditoría de Inventarios' : moduloActivo === 'inventario' ? 'Inventario y Kardex' : moduloActivo === 'sucursales' ? 'Administración de Sucursales' : moduloActivo === 'usuarios' ? 'Gestión de Usuarios y Roles' : moduloActivo}
-          </h2>
-          <span className="text-xs bg-emerald-950 text-emerald-400 border border-emerald-800 px-3 py-1 rounded-full font-medium">Pesos Mexicanos (MXN) (.00)</span>
+        <header className="min-h-16 bg-slate-900/50 border-b border-slate-800 px-4 md:px-8 py-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <button
+              type="button"
+              onClick={() => setMenuMovilAbierto(true)}
+              className="md:hidden shrink-0 bg-blue-600 hover:bg-blue-500 text-white w-10 h-10 rounded-xl font-bold text-lg cursor-pointer"
+              aria-label="Abrir menú"
+            >
+              ☰
+            </button>
+            <h2 className="text-sm sm:text-base md:text-lg font-bold text-white capitalize truncate">
+              Módulo: {moduloActivo === 'inicio' ? 'Panel General' : moduloActivo === 'cxc' ? 'Cuentas por Cobrar (CxC)' : moduloActivo === 'cxp' ? 'Cuentas por Pagar' : moduloActivo === 'gastos' ? 'Gastos Operativos' : moduloActivo === 'reportes' ? 'Reportes Financieros' : moduloActivo === 'auditoria' ? 'Auditoría de Inventarios' : moduloActivo === 'inventario' ? 'Inventario y Kardex' : moduloActivo === 'sucursales' ? 'Administración de Sucursales' : moduloActivo === 'usuarios' ? 'Gestión de Usuarios y Roles' : moduloActivo}
+            </h2>
+          </div>
+          <span className="hidden sm:inline-flex shrink-0 text-xs bg-emerald-950 text-emerald-400 border border-emerald-800 px-3 py-1 rounded-full font-medium">MXN · IVA incluido</span>
         </header>
 
-        <div className="p-8 overflow-y-auto flex-1">
+        <div className="p-4 md:p-8 overflow-y-auto flex-1">
           {/* PANEL GENERAL */}
           {moduloActivo === 'inicio' && (
             <div className="space-y-6">
@@ -2988,9 +3431,9 @@ export default function DashboardPage() {
                         <input type="checkbox" checked={fManejaSerie} onChange={(e) => setFManejaSerie(e.target.checked)} className="w-4 h-4 accent-blue-600" />
                       </div>
                       {fManejaSerie && (
-                        <div className="md:col-span-3">
-                          <label className="block text-slate-400 mb-1">No. de serie inicial</label>
-                          <input type="text" placeholder="SN-001" value={fSerie} onChange={(e) => setFSerie(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono" />
+                        <div className="md:col-span-3 bg-blue-950/30 border border-blue-800 rounded-xl p-3 text-blue-200">
+                          <strong className="block text-xs">Número de serie por unidad</strong>
+                          <span className="text-[11px] text-slate-300">No se asigna una serie al SKU en el catálogo. La serie física se captura o escanea al concretar cada venta, para validar la unidad entregada y su garantía.</span>
                         </div>
                       )}
 
@@ -3113,9 +3556,11 @@ export default function DashboardPage() {
                           <input type="text" value={productoSeleccionadoEdicion.modelo} onChange={(e) => setProductoSeleccionadoEdicion({...productoSeleccionadoEdicion, modelo: e.target.value})} className="w-1/2 bg-slate-950 border border-slate-700 rounded-xl px-2 py-2 text-white" />
                         </div>
                       </div>
-                      <div>
-                        <label className="block text-slate-400 mb-1">9. No. de Serie</label>
-                        <input type="text" value={productoSeleccionadoEdicion.numeroSerie} onChange={(e) => setProductoSeleccionadoEdicion({...productoSeleccionadoEdicion, numeroSerie: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono" />
+                      <div className="md:col-span-3 bg-slate-950 p-3 rounded-xl border border-slate-800">
+                        <label className="flex items-center justify-between gap-3 text-slate-300">
+                          <span><strong>9. ¿Maneja número de serie?</strong><br /><span className="text-[10px] text-slate-500">La serie se asigna a la unidad únicamente al momento de la venta.</span></span>
+                          <input type="checkbox" checked={productoSeleccionadoEdicion.manejaSerie} onChange={(e) => setProductoSeleccionadoEdicion({...productoSeleccionadoEdicion, manejaSerie: e.target.checked, numeroSerie: 'N/A'})} className="w-4 h-4 accent-blue-600" />
+                        </label>
                       </div>
                       <div>
                         <label className="block text-slate-400 mb-1">10. País de Origen</label>
@@ -4430,6 +4875,7 @@ export default function DashboardPage() {
                 <div>
                   <h3 className="text-xl font-bold text-white">Punto de Venta Profesional (MXN)</h3>
                   <p className="text-slate-400 text-sm">Venta activa para la sucursal: <span className="text-amber-400 font-bold">{sucursalActivaPOS}</span></p>
+                  {cotizacionOrigenPOS && <p className="text-blue-400 text-xs mt-1 font-semibold">📄 Venta originada desde cotización reservada: {cotizacionOrigenPOS}</p>}
                 </div>
                 <div className="flex items-center gap-3">
                   {usuarioEsAdministrador ? (
@@ -4485,38 +4931,48 @@ export default function DashboardPage() {
                 </form>
               </div>
 
-              {/* MODAL INTERNO PARA CAPTURAR NÚMERO DE SERIE FÍSICO */}
-              {modalSerieAbierto && productoPendienteSerie && (
+              {/* MODAL PARA CAPTURAR / VALIDAR NÚMERO DE SERIE FÍSICO */}
+              {modalSerieAbierto && lineaSerieEditandoId && (() => {
+                const itemSerie = carrito.find((it: ItemVenta) => it.lineaId === lineaSerieEditandoId);
+                if (!itemSerie) return null;
+                return (
                 <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
                   <div className="bg-slate-900 border border-blue-500/60 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
                     <div className="flex justify-between items-center border-b border-slate-800 pb-3">
-                      <h3 className="text-base font-bold text-blue-400">📌 Registrar Número de Serie Físico</h3>
-                      <button type="button" onClick={() => setModalSerieAbierto(false)} className="text-red-400 font-bold text-xs bg-red-950/40 px-3 py-1 rounded-lg border border-red-800 cursor-pointer">✕ Cancelar</button>
+                      <h3 className="text-base font-bold text-blue-400">📌 Asignar Número de Serie Físico</h3>
+                      <button type="button" onClick={() => { setModalSerieAbierto(false); setLineaSerieEditandoId(null); setInputNumeroSerieFisico(''); }} className="text-red-400 font-bold text-xs bg-red-950/40 px-3 py-1 rounded-lg border border-red-800 cursor-pointer">✕ Cancelar</button>
                     </div>
                     <form onSubmit={confirmarNumeroSerieModal} className="space-y-3 text-xs">
-                      <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
-                        <span className="text-slate-400 block text-[10px]">Artículo a vender:</span>
-                        <strong className="text-white text-sm">{productoPendienteSerie.nombre}</strong>
+                      <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-1">
+                        <span className="text-slate-400 block text-[10px]">Equipo físico que se entregará:</span>
+                        <strong className="text-white text-sm">{itemSerie.nombre}</strong>
+                        <span className="text-blue-400 font-mono block">SKU: {itemSerie.codigo}</span>
+                        <span className="text-slate-500 block">Sucursal: {itemSerie.sucursal}</span>
+                      </div>
+                      <div className="bg-amber-950/30 border border-amber-800 rounded-xl p-3 text-[11px] text-amber-200">
+                        Tome físicamente el equipo que se entregará y capture o escanee exactamente la serie de su placa. El sistema rechazará una serie repetida o ya vendida.
                       </div>
                       <div>
-                        <label className="block text-slate-400 mb-1">Número de Serie Físico (Escaneado o Manual):</label>
+                        <label className="block text-slate-400 mb-1">Número de Serie Físico *</label>
                         <input
                           type="text"
                           value={inputNumeroSerieFisico}
-                          onChange={(e) => setInputNumeroSerieFisico(e.target.value)}
+                          onChange={(e) => setInputNumeroSerieFisico(e.target.value.toUpperCase())}
+                          placeholder="Escanee o escriba la serie"
                           required
-                          className="w-full bg-slate-950 border border-blue-600 rounded-xl px-4 py-3 text-sm text-white font-mono"
+                          className="w-full bg-slate-950 border border-blue-600 rounded-xl px-4 py-3 text-sm text-white font-mono uppercase"
                           autoFocus
                         />
                       </div>
                       <div className="flex justify-end gap-3 pt-2">
-                        <button type="button" onClick={() => setModalSerieAbierto(false)} className="bg-slate-800 px-4 py-2 rounded-xl text-slate-300 cursor-pointer">Cancelar</button>
-                        <button type="submit" className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2 rounded-xl shadow cursor-pointer">Confirmar y Agregar</button>
+                        <button type="button" onClick={() => { setModalSerieAbierto(false); setLineaSerieEditandoId(null); setInputNumeroSerieFisico(''); }} className="bg-slate-800 px-4 py-2 rounded-xl text-slate-300 cursor-pointer">Cancelar</button>
+                        <button type="submit" className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2 rounded-xl shadow cursor-pointer">Validar y Asignar Serie</button>
                       </div>
                     </form>
                   </div>
                 </div>
-              )}
+                );
+              })()}
 
               {ventaExitosa && ticketGenerado && (
                 <div className="bg-slate-900 border border-emerald-600 p-6 rounded-2xl space-y-4 shadow-2xl">
@@ -4535,7 +4991,7 @@ export default function DashboardPage() {
                       <div key={idx} className="border-b border-slate-900 pb-2 flex justify-between">
                         <div>
                           <strong className="text-white">{it.cantidadVendida}x {it.nombre}</strong>
-                          <p className="text-blue-400 font-mono text-[11px]">📌 Serie Física: {it.numeroSerie}</p>
+                          {it.requiereSerie && <p className="text-blue-400 font-mono text-[11px]">📌 Serie Física: {it.numeroSerie}</p>}
                           <p className="text-purple-400 text-[10px]">🛡️ Garantía: {it.fechaGarantia}</p>
                         </div>
                         <span className="text-emerald-400 font-bold">{formatearMoneda(it.precio * it.cantidadVendida)}</span>
@@ -4584,14 +5040,10 @@ export default function DashboardPage() {
                                         setModalSinStockAbierto(true);
                                         return;
                                       }
-                                      if (prod.manejaSerie) {
-                                        setProductoPendienteSerie(prod);
-                                        setEsRegaloPendiente(false);
-                                        setStockPendienteSerie(stockSuc);
-                                        setInputNumeroSerieFisico(`SN-${Math.floor(100000 + Math.random() * 900000)}`);
-                                        setModalSerieAbierto(true);
+                                      if (prod.esPaqueteDefinido && prod.componentesPaquete) {
+                                        agregarPaqueteAlCarrito(prod, stockSuc);
                                       } else {
-                                        agregarAlCarrito(prod, false, stockSuc, 'N/A');
+                                        agregarAlCarrito(prod, false, stockSuc, '');
                                       }
                                     }} className="bg-blue-600 text-white px-3 py-1 rounded-lg text-xs font-bold cursor-pointer">+ Venta</button>
                                     <button type="button" onClick={() => {
@@ -4600,14 +5052,10 @@ export default function DashboardPage() {
                                         setModalSinStockAbierto(true);
                                         return;
                                       }
-                                      if (prod.manejaSerie) {
-                                        setProductoPendienteSerie(prod);
-                                        setEsRegaloPendiente(true);
-                                        setStockPendienteSerie(stockSuc);
-                                        setInputNumeroSerieFisico(`SN-${Math.floor(100000 + Math.random() * 900000)}`);
-                                        setModalSerieAbierto(true);
+                                      if (prod.esPaqueteDefinido && prod.componentesPaquete) {
+                                        agregarPaqueteAlCarrito(prod, stockSuc);
                                       } else {
-                                        agregarAlCarrito(prod, true, stockSuc, 'N/A');
+                                        agregarAlCarrito(prod, true, stockSuc, '');
                                       }
                                     }} className="bg-amber-600 text-white px-3 py-1 rounded-lg text-xs font-bold cursor-pointer">🎁 Regalo</button>
                                   </>
@@ -4664,20 +5112,37 @@ export default function DashboardPage() {
                                   {item.esRegalo ? 'REGALO ($0.00)' : formatearMoneda(unitFinal * item.cantidadVendida)}
                                 </span>
                               </div>
-                              <p className="text-blue-400 font-mono text-[10px]">📌 N/S: {item.numeroSerie}</p>
+                              {item.requiereSerie ? (
+                                <div className={`flex items-center justify-between gap-2 p-2 rounded border ${item.numeroSerie ? 'bg-emerald-950/30 border-emerald-800' : 'bg-amber-950/30 border-amber-800'}`}>
+                                  <div>
+                                    <span className="text-[9px] text-slate-400 block">Número de serie</span>
+                                    <span className={`font-mono text-[10px] font-bold ${item.numeroSerie ? 'text-emerald-400' : 'text-amber-400'}`}>{item.numeroSerie || 'PENDIENTE DE ASIGNAR'}</span>
+                                  </div>
+                                  <button type="button" onClick={() => abrirCapturaSerieCarrito(item.lineaId)} className="bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1 rounded text-[10px] font-bold cursor-pointer">{item.numeroSerie ? 'Cambiar serie' : 'Asignar serie'}</button>
+                                </div>
+                              ) : (
+                                <p className="text-slate-500 font-mono text-[10px]">N/S: No aplica</p>
+                              )}
                               {!item.esRegalo && !item.esPaqueteComponente && (
                                 <div className="flex items-center justify-between bg-slate-900 p-1 rounded border border-slate-800">
                                   <span className="text-[10px] text-slate-400">Descuento Fijo ($):</span>
-                                  <input type="number" step="0.01" value={item.descuentoMontoFijo === 0 ? '' : item.descuentoMontoFijo} placeholder="0.00" onChange={(e) => cambiarDescuentoMonto(item.id, item.sucursal, item.esPaqueteComponente, item.esRegalo, e.target.value)} className="w-16 bg-slate-950 border border-slate-700 text-center rounded text-white text-xs" />
+                                  <input type="number" step="0.01" value={item.descuentoMontoFijo === 0 ? '' : item.descuentoMontoFijo} placeholder="0.00" onChange={(e) => cambiarDescuentoMonto(item.lineaId, e.target.value)} className="w-16 bg-slate-950 border border-slate-700 text-center rounded text-white text-xs" />
                                 </div>
                               )}
                               <div className="flex justify-between items-center pt-1 border-t border-slate-900">
                                 <span className="text-[10px] text-blue-400">Suc: {item.sucursal}</span>
-                                <div className="flex items-center gap-2">
-                                  <button type="button" onClick={() => cambiarCantidad(item.id, item.sucursal, item.esPaqueteComponente, item.esRegalo, -1)} className="w-5 h-5 bg-slate-800 rounded text-white font-bold cursor-pointer">-</button>
-                                  <span className="font-bold text-white w-4 text-center">{item.cantidadVendida}</span>
-                                  <button type="button" onClick={() => cambiarCantidad(item.id, item.sucursal, item.esPaqueteComponente, item.esRegalo, 1)} className="w-5 h-5 bg-slate-800 rounded text-white font-bold cursor-pointer">+</button>
-                                </div>
+                                {item.requiereSerie ? (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[10px] text-slate-400">1 unidad</span>
+                                    <button type="button" onClick={() => quitarLineaCarrito(item.lineaId)} className="bg-red-900 hover:bg-red-800 text-red-200 px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer">Quitar</button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-2">
+                                    <button type="button" onClick={() => cambiarCantidad(item.lineaId, -1)} className="w-5 h-5 bg-slate-800 rounded text-white font-bold cursor-pointer">-</button>
+                                    <span className="font-bold text-white w-4 text-center">{item.cantidadVendida}</span>
+                                    <button type="button" onClick={() => cambiarCantidad(item.lineaId, 1)} className="w-5 h-5 bg-slate-800 rounded text-white font-bold cursor-pointer">+</button>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           );
