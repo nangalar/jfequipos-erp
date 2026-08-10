@@ -418,9 +418,11 @@ export default function DashboardPage() {
 
   const [modalModificarStockAbierto, setModalModificarStockAbierto] = useState<boolean>(false);
   const [stockItemSeleccionado, setStockItemSeleccionado] = useState<StockSucursal | null>(null);
-  const [tipoMovimientoMod, setTipoMovimientoMod] = useState<MovimientoKardex['tipoMovimiento']>('Transferencia');
+  const [tipoMovimientoMod, setTipoMovimientoMod] = useState<MovimientoKardex['tipoMovimiento']>('Salida');
   const [cantidadMod, setCantidadMod] = useState<string>('1');
   const [motivoMod, setMotivoMod] = useState<string>('');
+  const [sucursalDestinoMod, setSucursalDestinoMod] = useState<string>('');
+  const [almacenDestinoMod, setAlmacenDestinoMod] = useState<string>('');
 
   // Cámaras
   const [camaraAltaActiva, setCamaraAltaActiva] = useState<boolean>(false);
@@ -643,6 +645,176 @@ export default function DashboardPage() {
     fechaAlta: row.created_at ? String(row.created_at).slice(0, 10) : ''
   });
 
+  const relacionUnicaDb = (rel: any) => Array.isArray(rel) ? rel[0] : rel;
+
+  const mapearProductoDb = (row: any): ProductoCatalogo => {
+    const proveedorRel = relacionUnicaDb(row.suppliers);
+    const componentes = Array.isArray(row.package_components)
+      ? row.package_components.map((c: any) => ({
+          productoId: Number(c.productoId ?? c.product_id ?? 0),
+          nombre: String(c.nombre ?? c.name ?? ''),
+          precioLista: Number(c.precioLista ?? c.list_price ?? 0),
+          numeroSerie: String(c.numeroSerie ?? c.serial_number ?? 'N/A')
+        })).filter((c: any) => c.productoId > 0)
+      : [];
+
+    return {
+      id: Number(row.id),
+      claveInterna: String(row.internal_key || ''),
+      codigo: String(row.sku || ''),
+      nombre: String(row.name || ''),
+      descripcion: String(row.description || ''),
+      categoria: String(row.category || ''),
+      subcategoria: String(row.subcategory || ''),
+      marca: String(row.brand || ''),
+      modelo: String(row.model || ''),
+      manejaSerie: row.manages_serial === true,
+      numeroSerie: 'N/A',
+      paisOrigen: String(row.origin_country || ''),
+      proveedor: String(row.supplier_text || proveedorRel?.commercial_name || ''),
+      precioCompra: Number(row.purchase_price || 0),
+      noFacturaCompra: String(row.purchase_invoice || ''),
+      pedimentoReferencia: String(row.customs_reference || ''),
+      costoPromedio: Number(row.average_cost || 0),
+      ultimoCosto: Number(row.last_cost || 0),
+      precio: Number(row.sale_price || 0),
+      precioMayoreo: Number(row.wholesale_price || 0),
+      precioEspecial: Number(row.special_price || 0),
+      iva: Number(row.vat_percent || 0),
+      margenUtilidad: Number(row.profit_margin || 0),
+      unidadMedida: String(row.unit_of_measure || 'Pieza'),
+      color: String(row.color || ''),
+      capacidad: String(row.capacity || ''),
+      imagen: String(row.image_url || ''),
+      manejaGarantia: row.manages_warranty === true,
+      garantia: String(row.warranty || 'Sin garantía'),
+      estatus: row.status === 'Inactivo' ? 'Inactivo' : row.status === 'Descontinuado' ? 'Descontinuado' : 'Activo',
+      fechaCreacion: row.created_at ? String(row.created_at).slice(0, 10) : '',
+      ultimaModificacion: row.updated_at ? String(row.updated_at).slice(0, 10) : '',
+      esRegalo: row.is_gift === true,
+      esPaqueteDefinido: row.is_package === true,
+      componentesPaquete: componentes
+    };
+  };
+
+  const mapearInventarioDb = (row: any): StockSucursal => {
+    const sucRel = relacionUnicaDb(row.branches);
+    return {
+      productoId: Number(row.product_id),
+      sucursal: String(sucRel?.name || ''),
+      almacen: String(row.warehouse || ''),
+      stockActual: Number(row.stock_current || 0),
+      exhibicion: Number(row.display_qty || 0),
+      apartados: Number(row.reserved_qty || 0),
+      transito: Number(row.in_transit_qty || 0),
+      consignacion: Number(row.consignment_qty || 0),
+      danados: Number(row.damaged_qty || 0),
+      existenciaMinima: Number(row.min_qty || 0),
+      existenciaMaxima: Number(row.max_qty || 0)
+    };
+  };
+
+  const mapearKardexDb = (row: any): MovimientoKardex => {
+    const sucRel = relacionUnicaDb(row.branches);
+    const prodRel = relacionUnicaDb(row.products);
+    const usrRel = relacionUnicaDb(row.profiles);
+    const fechaHora = row.occurred_at ? new Date(row.occurred_at) : new Date();
+    return {
+      id: Number(row.id),
+      fecha: fechaHora.toLocaleDateString('es-MX'),
+      hora: fechaHora.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }),
+      usuario: String(usrRel?.full_name || 'Usuario'),
+      sucursal: String(sucRel?.name || ''),
+      almacen: String(row.warehouse || ''),
+      producto: String(prodRel?.name || 'Producto'),
+      cantidad: Number(row.quantity || 0),
+      tipoMovimiento: row.movement_type as MovimientoKardex['tipoMovimiento'],
+      existenciaAnterior: Number(row.stock_before || 0),
+      existenciaPosterior: Number(row.stock_after || 0),
+      costo: Number(row.cost || 0),
+      motivo: String(row.reason || ''),
+      observaciones: String(row.notes || '')
+    };
+  };
+
+  const construirPayloadProductoDb = (prod: ProductoCatalogo) => ({
+    internal_key: prod.claveInterna.trim(),
+    sku: prod.codigo.trim().toUpperCase(),
+    name: prod.nombre.trim(),
+    description: prod.descripcion.trim(),
+    category: prod.categoria.trim(),
+    subcategory: prod.subcategoria.trim(),
+    brand: prod.marca.trim(),
+    model: prod.modelo.trim(),
+    manages_serial: prod.manejaSerie,
+    origin_country: prod.paisOrigen.trim(),
+    supplier_text: prod.proveedor.trim(),
+    purchase_price: Number(prod.precioCompra || 0),
+    purchase_invoice: prod.noFacturaCompra.trim(),
+    customs_reference: prod.pedimentoReferencia.trim(),
+    average_cost: Number(prod.costoPromedio || 0),
+    last_cost: Number(prod.ultimoCosto || prod.costoPromedio || 0),
+    sale_price: Number(prod.precio || 0),
+    wholesale_price: Number(prod.precioMayoreo || 0),
+    special_price: Number(prod.precioEspecial || 0),
+    vat_percent: Number(prod.iva || 0),
+    prices_include_vat: true,
+    profit_margin: Number(prod.margenUtilidad || 0),
+    unit_of_measure: prod.unidadMedida.trim() || 'Pieza',
+    color: prod.color.trim(),
+    capacity: prod.capacidad.trim(),
+    image_url: prod.imagen || '',
+    manages_warranty: prod.manejaGarantia,
+    warranty: prod.manejaGarantia ? prod.garantia.trim() : 'Sin garantía',
+    status: prod.estatus,
+    is_gift: prod.esRegalo === true,
+    is_package: prod.esPaqueteDefinido === true,
+    package_components: prod.esPaqueteDefinido ? (prod.componentesPaquete || []) : []
+  });
+
+  const cargarProductosInventario = async () => {
+    const [prodResp, catResp, invResp, kardexResp, seriesResp] = await Promise.all([
+      supabase
+        .from('products')
+        .select('*, suppliers(commercial_name)')
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('product_categories')
+        .select('id, name, active')
+        .eq('active', true)
+        .order('name'),
+      supabase
+        .from('inventory')
+        .select('product_id, branch_id, warehouse, stock_current, display_qty, reserved_qty, in_transit_qty, consignment_qty, damaged_qty, min_qty, max_qty, branches(name)'),
+      supabase
+        .from('inventory_movements')
+        .select('id, occurred_at, user_id, branch_id, warehouse, product_id, quantity, movement_type, stock_before, stock_after, cost, reason, notes, reference, branches(name), products(name), profiles(full_name)')
+        .order('occurred_at', { ascending: false })
+        .limit(1000),
+      supabase
+        .from('serial_registry')
+        .select('internal_id, sku, serial_number, status')
+    ]);
+
+    if (prodResp.error) throw new Error(`Productos: ${prodResp.error.message}`);
+    if (catResp.error) throw new Error(`Categorías: ${catResp.error.message}`);
+    if (invResp.error) throw new Error(`Inventario: ${invResp.error.message}`);
+    if (kardexResp.error) throw new Error(`Kardex: ${kardexResp.error.message}`);
+    if (seriesResp.error) throw new Error(`Series: ${seriesResp.error.message}`);
+
+    setCatalogoProductos((prodResp.data || []).map(mapearProductoDb));
+    const categoriasDb = (catResp.data || []).map((c: any) => String(c.name || '')).filter(Boolean);
+    if (categoriasDb.length > 0) setListaCategorias(categoriasDb);
+    setInventarioSucursales((invResp.data || []).map(mapearInventarioDb).filter((i: StockSucursal) => Boolean(i.sucursal)));
+    setKardexMovimientos((kardexResp.data || []).map(mapearKardexDb).filter((k: MovimientoKardex) => Boolean(k.sucursal)));
+    setSeriesValidacion((seriesResp.data || []).map((s: any) => ({
+      idInterno: String(s.internal_id || ''),
+      sku: String(s.sku || ''),
+      numeroSerie: String(s.serial_number || ''),
+      estatus: s.status === 'Vendida' ? 'Vendida' : 'Disponible'
+    })));
+  };
+
   const normalizarRolRelacion = (rel: any) => Array.isArray(rel) ? rel[0] : rel;
 
   const cargarCatalogosSeguridad = async (usr: UsuarioSistema) => {
@@ -716,6 +888,7 @@ export default function DashboardPage() {
 
     setUsuarioLogueado(usr);
     await cargarCatalogosSeguridad(usr);
+    await cargarProductosInventario();
     return usr;
   };
 
@@ -787,11 +960,24 @@ export default function DashboardPage() {
     setUsuariosSistema([]);
     setRolesSistema([]);
     setSucursales([]);
+    setCatalogoProductos([]);
+    setInventarioSucursales([]);
+    setKardexMovimientos([]);
+    setSeriesValidacion([]);
     setEmailLogin('');
     setPasswordLogin('');
     setModuloActivo('inicio');
     setMenuMovilAbierto(false);
   };
+
+  // Refresca datos persistentes al entrar a módulos que dependen de Productos/Inventario.
+  useEffect(() => {
+    if (!usuarioLogueado) return;
+    if (!['productos', 'inventario', 'ventas', 'cotizaciones', 'auditoria'].includes(moduloActivo)) return;
+    cargarProductosInventario().catch((error: any) => {
+      console.error('No fue posible refrescar Productos/Inventario:', error);
+    });
+  }, [moduloActivo, usuarioLogueado?.id]);
 
   // Mantiene sincronizados los selectores operativos con las sucursales que el usuario tiene autorizadas.
   useEffect(() => {
@@ -846,14 +1032,35 @@ export default function DashboardPage() {
     return reg ? reg.stockActual : 0;
   };
 
-  const registrarCategoriaNueva = (e: React.FormEvent) => {
+  const registrarCategoriaNueva = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!nuevaCategoriaInput.trim()) return;
-    if (!listaCategorias.includes(nuevaCategoriaInput.trim())) {
-      setListaCategorias([...listaCategorias, nuevaCategoriaInput.trim()]);
-      setFCat(nuevaCategoriaInput.trim());
+    const nombreCategoria = nuevaCategoriaInput.trim();
+    if (!nombreCategoria) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('product_categories')
+        .insert({ name: nombreCategoria, active: true })
+        .select('name')
+        .single();
+
+      if (error) {
+        if (error.code === '23505') {
+          setMensajeNotif(`La categoría "${nombreCategoria}" ya existe.`);
+          setModalNotifAbierto(true);
+          return;
+        }
+        throw error;
+      }
+
+      const nombreGuardado = String(data?.name || nombreCategoria);
+      setListaCategorias(prev => [...prev.filter(c => normalizarTextoCatalogo(c) !== normalizarTextoCatalogo(nombreGuardado)), nombreGuardado].sort());
+      setFCat(nombreGuardado);
       setNuevaCategoriaInput('');
-      setMensajeNotif('Categoría registrada con éxito.');
+      setMensajeNotif('Categoría registrada y guardada en la base de datos.');
+      setModalNotifAbierto(true);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible registrar la categoría: ${error?.message || String(error)}`);
       setModalNotifAbierto(true);
     }
   };
@@ -1124,7 +1331,7 @@ export default function DashboardPage() {
     setKardexMovimientos(prev => [nuevoMov, ...prev]);
   };
 
-  const procesarIngresoInventario = (e: React.FormEvent) => {
+  const procesarIngresoInventario = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!productoIngreso) return;
     if (!sucursalIngreso) {
@@ -1137,51 +1344,51 @@ export default function DashboardPage() {
       setModalNotifAbierto(true);
       return;
     }
+
+    const sucursalRef = sucursales.find(s => s.nombre === sucursalIngreso);
+    if (!sucursalRef) {
+      setMensajeNotif('La sucursal seleccionada no existe en la base de datos.');
+      setModalNotifAbierto(true);
+      return;
+    }
+
     const cant = Number(cantIngreso) || 0;
-    const min = Number(minIngreso) || 3;
-    const max = Number(maxIngreso) || 50;
+    const min = Number(minIngreso) || 0;
+    const max = Number(maxIngreso) || 0;
+    if (cant <= 0) return;
 
-    let existAnt = 0;
-    let existPost = 0;
+    try {
+      const occurredAt = new Date(`${fechaIngresoManual}T12:00:00`).toISOString();
+      const { error } = await supabase.rpc('inventory_apply_movement', {
+        p_product_id: productoIngreso.id,
+        p_branch_id: sucursalRef.id,
+        p_warehouse: almacenIngreso.trim(),
+        p_quantity: cant,
+        p_movement_type: 'Entrada',
+        p_min_qty: min,
+        p_max_qty: max,
+        p_cost: productoIngreso.costoPromedio || productoIngreso.precioCompra || 0,
+        p_reason: motivoIngreso.trim(),
+        p_notes: `Entrada registrada desde módulo Inventario. Fecha operativa: ${fechaIngresoManual}`,
+        p_reference: '',
+        p_occurred_at: occurredAt
+      });
+      if (error) throw error;
 
-    setInventarioSucursales((prev: StockSucursal[]) => {
-      const existe = prev.find((i: StockSucursal) => i.productoId === productoIngreso.id && i.sucursal === sucursalIngreso && i.almacen === almacenIngreso);
-      if (existe) {
-        existAnt = existe.stockActual;
-        existPost = existAnt + cant;
-        return prev.map((i: StockSucursal) => i.productoId === productoIngreso.id && i.sucursal === sucursalIngreso && i.almacen === almacenIngreso
-          ? { ...i, stockActual: existPost, existenciaMinima: min, existenciaMaxima: max }
-          : i
-        );
-      } else {
-        existAnt = 0;
-        existPost = cant;
-        return [...prev, { productoId: productoIngreso.id, sucursal: sucursalIngreso, almacen: almacenIngreso, stockActual: cant, exhibicion: 0, apartados: 0, transito: 0, consignacion: 0, danados: 0, existenciaMinima: min, existenciaMaxima: max }];
-      }
-    });
-
-    registrarMovimientoKardex(
-      productoIngreso.nombre,
-      sucursalIngreso,
-      almacenIngreso,
-      cant,
-      'Entrada',
-      existAnt,
-      existPost,
-      productoIngreso.costoPromedio || productoIngreso.precioCompra,
-      motivoIngreso,
-      `Fecha de registro: ${fechaIngresoManual}`
-    );
-
-    setModalIngresoStockAbierto(false);
-    setProductoIngreso(null);
-    setBusquedaInventarioModal('');
-    setCamaraInventarioActiva(false);
-    setMensajeNotif(`¡Entrada de ${cant} un. guardada con éxito el ${fechaIngresoManual}! Registrada en Kardex.`);
-    setModalNotifAbierto(true);
+      await cargarProductosInventario();
+      setModalIngresoStockAbierto(false);
+      setProductoIngreso(null);
+      setBusquedaInventarioModal('');
+      setCamaraInventarioActiva(false);
+      setMensajeNotif(`¡Entrada de ${cant} unidades guardada permanentemente en Inventario y Kardex!`);
+      setModalNotifAbierto(true);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible registrar la entrada: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
+    }
   };
 
-  const procesarModificacionStock = (e: React.FormEvent) => {
+  const procesarModificacionStock = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!stockItemSeleccionado) return;
     if (!puedeOperarSucursal(stockItemSeleccionado.sucursal)) {
@@ -1189,48 +1396,73 @@ export default function DashboardPage() {
       setModalNotifAbierto(true);
       return;
     }
+
     const cant = Number(cantidadMod) || 0;
     if (cant <= 0) return;
 
     const prodObj = catalogoProductos.find(p => p.id === stockItemSeleccionado.productoId);
-    const prodNombre = prodObj ? prodObj.nombre : 'Producto';
-    const existAnt = stockItemSeleccionado.stockActual;
-    let existPost = existAnt;
-
-    if (tipoMovimientoMod === 'Transferencia' || tipoMovimientoMod === 'Salida') {
-      existPost = Math.max(0, existAnt - cant);
-    } else if (tipoMovimientoMod === 'Devolución' || tipoMovimientoMod === 'Entrada') {
-      existPost = existAnt + cant;
-    } else if (tipoMovimientoMod === 'Dañado') {
-      existPost = Math.max(0, existAnt - cant);
+    const sucursalOrigen = sucursales.find(s => s.nombre === stockItemSeleccionado.sucursal);
+    if (!prodObj || !sucursalOrigen) {
+      setMensajeNotif('No se pudo resolver el producto o la sucursal de origen.');
+      setModalNotifAbierto(true);
+      return;
     }
 
-    setInventarioSucursales(prev => prev.map(inv => {
-      if (inv.productoId === stockItemSeleccionado.productoId && inv.sucursal === stockItemSeleccionado.sucursal && inv.almacen === stockItemSeleccionado.almacen) {
-        let nuevosDanados = inv.danados;
-        if (tipoMovimientoMod === 'Dañado') nuevosDanados += cant;
-        return { ...inv, stockActual: existPost, danados: nuevosDanados };
+    try {
+      if (tipoMovimientoMod === 'Transferencia') {
+        if (!usuarioEsAdministrador) {
+          throw new Error('Solo un Administrador puede transferir inventario entre sucursales.');
+        }
+        const sucursalDestino = sucursales.find(s => s.nombre === sucursalDestinoMod && s.estatus === 'Activa');
+        if (!sucursalDestino || !almacenDestinoMod.trim()) {
+          throw new Error('Seleccione la sucursal y el almacén de destino.');
+        }
+
+        const { error } = await supabase.rpc('inventory_transfer', {
+          p_product_id: stockItemSeleccionado.productoId,
+          p_from_branch_id: sucursalOrigen.id,
+          p_from_warehouse: stockItemSeleccionado.almacen,
+          p_to_branch_id: sucursalDestino.id,
+          p_to_warehouse: almacenDestinoMod.trim(),
+          p_quantity: cant,
+          p_cost: prodObj.costoPromedio || prodObj.precioCompra || 0,
+          p_reason: motivoMod.trim(),
+          p_notes: `Transferencia ${stockItemSeleccionado.sucursal} → ${sucursalDestino.nombre}`,
+          p_occurred_at: new Date().toISOString()
+        });
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.rpc('inventory_apply_movement', {
+          p_product_id: stockItemSeleccionado.productoId,
+          p_branch_id: sucursalOrigen.id,
+          p_warehouse: stockItemSeleccionado.almacen,
+          p_quantity: cant,
+          p_movement_type: tipoMovimientoMod,
+          p_min_qty: null,
+          p_max_qty: null,
+          p_cost: prodObj.costoPromedio || prodObj.precioCompra || 0,
+          p_reason: motivoMod.trim(),
+          p_notes: `Movimiento operativo de inventario (${tipoMovimientoMod})`,
+          p_reference: '',
+          p_occurred_at: new Date().toISOString()
+        });
+        if (error) throw error;
       }
-      return inv;
-    }));
 
-    registrarMovimientoKardex(
-      prodNombre,
-      stockItemSeleccionado.sucursal,
-      stockItemSeleccionado.almacen,
-      cant,
-      tipoMovimientoMod,
-      existAnt,
-      existPost,
-      prodObj ? prodObj.costoPromedio : 0,
-      motivoMod,
-      `Movimiento especial de inventario (${tipoMovimientoMod})`
-    );
-
-    setModalModificarStockAbierto(false);
-    setStockItemSeleccionado(null);
-    setMensajeNotif(`¡Movimiento (${tipoMovimientoMod}) de ${cant} unidades aplicado con éxito y guardado en Kardex!`);
-    setModalNotifAbierto(true);
+      await cargarProductosInventario();
+      setModalModificarStockAbierto(false);
+      setStockItemSeleccionado(null);
+      setSucursalDestinoMod('');
+      setAlmacenDestinoMod('');
+      setCantidadMod('1');
+      setMotivoMod('');
+      setTipoMovimientoMod('Salida');
+      setMensajeNotif(`¡Movimiento ${tipoMovimientoMod} aplicado permanentemente y registrado en Kardex!`);
+      setModalNotifAbierto(true);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible aplicar el movimiento: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
+    }
   };
 
   const registrarAuditoria = (e: React.FormEvent) => {
@@ -1638,7 +1870,7 @@ export default function DashboardPage() {
     }) || null;
   };
 
-  const registrarProductoCatalogo = (e: React.FormEvent) => {
+  const registrarProductoCatalogo = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!fCodigo || !fNombre || !fPVenta) return;
 
@@ -1655,7 +1887,7 @@ export default function DashboardPage() {
     const costoV = fPCompra ? Number(fPCompra) : precioV * 0.6;
 
     const nuevoProd: ProductoCatalogo = {
-      id: Date.now(),
+      id: 0,
       claveInterna: fClave.trim() || `CLV-${Math.floor(1000 + Math.random() * 9000)}`,
       codigo: fCodigo.trim().toUpperCase(),
       nombre: fNombre.trim(),
@@ -1665,7 +1897,6 @@ export default function DashboardPage() {
       marca: fMarca,
       modelo: fModelo,
       manejaSerie: fManejaSerie,
-      // La serie física NO pertenece al SKU. Se captura al momento de vender la unidad.
       numeroSerie: 'N/A',
       paisOrigen: fPais,
       proveedor: fProv,
@@ -1690,24 +1921,45 @@ export default function DashboardPage() {
       ultimaModificacion: new Date().toISOString().split('T')[0],
       esRegalo: fEsRegalo,
       esPaqueteDefinido: fEsPaquete,
-      componentesPaquete: fEsPaquete ? componentesSeleccionadosPaquete : undefined
+      componentesPaquete: fEsPaquete ? componentesSeleccionadosPaquete : []
     };
 
-    setCatalogoProductos((prev: ProductoCatalogo[]) => [nuevoProd, ...prev]);
-    setModalAltaAbierto(false);
-    setComponentesSeleccionadosPaquete([]);
-    setFClave('');
-    setFCodigo('');
-    setFNombre('');
-    setFDesc('');
-    setFPCompra('');
-    setFPVenta('');
-    setFSerie('');
-    setMensajeNotif('¡Producto registrado con éxito!');
-    setModalNotifAbierto(true);
+    try {
+      const { data, error } = await supabase
+        .from('products')
+        .insert(construirPayloadProductoDb(nuevoProd))
+        .select('*, suppliers(commercial_name)')
+        .single();
+
+      if (error) {
+        if (error.code === '23505') {
+          setMensajeNotif('⚠️ El SKU o el nombre del producto ya existe en la base de datos. No se creó el duplicado.');
+          setModalNotifAbierto(true);
+          return;
+        }
+        throw error;
+      }
+
+      const guardado = mapearProductoDb(data);
+      setCatalogoProductos(prev => [guardado, ...prev.filter(p => p.id !== guardado.id)]);
+      setModalAltaAbierto(false);
+      setComponentesSeleccionadosPaquete([]);
+      setFClave('');
+      setFCodigo('');
+      setFNombre('');
+      setFDesc('');
+      setFPCompra('');
+      setFPVenta('');
+      setFSerie('');
+      setMensajeNotif('¡Producto registrado y guardado permanentemente en Supabase!');
+      setModalNotifAbierto(true);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible registrar el producto: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
+    }
   };
 
-  const actualizarProductoCatalogo = (e: React.FormEvent) => {
+  const actualizarProductoCatalogo = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!productoSeleccionadoEdicion) return;
 
@@ -1724,21 +1976,41 @@ export default function DashboardPage() {
       return;
     }
 
-    setCatalogoProductos((prev: ProductoCatalogo[]) =>
-      prev.map((p: ProductoCatalogo) => (p.id === productoSeleccionadoEdicion.id ? productoSeleccionadoEdicion : p))
-    );
-    setProductoSeleccionadoEdicion(null);
-    setMensajeNotif('¡Ficha técnica actualizada con éxito!');
-    setModalNotifAbierto(true);
+    try {
+      const { data, error } = await supabase
+        .from('products')
+        .update(construirPayloadProductoDb(productoSeleccionadoEdicion))
+        .eq('id', productoSeleccionadoEdicion.id)
+        .select('*, suppliers(commercial_name)')
+        .single();
+
+      if (error) {
+        if (error.code === '23505') {
+          setMensajeNotif('⚠️ El SKU o el nombre ya pertenece a otro producto en la base de datos.');
+          setModalNotifAbierto(true);
+          return;
+        }
+        throw error;
+      }
+
+      const actualizado = mapearProductoDb(data);
+      setCatalogoProductos(prev => prev.map(p => p.id === actualizado.id ? actualizado : p));
+      setProductoSeleccionadoEdicion(null);
+      setMensajeNotif('¡Ficha técnica actualizada permanentemente en Supabase!');
+      setModalNotifAbierto(true);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible actualizar el producto: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
+    }
   };
 
-  const eliminarProductoCatalogo = (producto: ProductoCatalogo) => {
+  const eliminarProductoCatalogo = async (producto: ProductoCatalogo) => {
     const stockRelacionado = inventarioSucursales
       .filter((inv: StockSucursal) => inv.productoId === producto.id)
       .reduce((acc: number, inv: StockSucursal) => acc + inv.stockActual + inv.exhibicion + inv.apartados + inv.transito + inv.consignacion + inv.danados, 0);
 
     if (stockRelacionado > 0) {
-      setMensajeNotif(`No se puede eliminar "${producto.nombre}" porque todavía tiene existencias o movimientos de stock asociados. Primero deje sus existencias en cero.`);
+      setMensajeNotif(`No se puede eliminar "${producto.nombre}" porque todavía tiene existencias asociadas. Primero deje sus existencias en cero.`);
       setModalNotifAbierto(true);
       return;
     }
@@ -1759,10 +2031,23 @@ export default function DashboardPage() {
     const confirmar = window.confirm(`¿Desea eliminar definitivamente el producto "${producto.nombre}"? Esta acción no se puede deshacer.`);
     if (!confirmar) return;
 
-    setCatalogoProductos((prev: ProductoCatalogo[]) => prev.filter((p: ProductoCatalogo) => p.id !== producto.id));
-    setInventarioSucursales((prev: StockSucursal[]) => prev.filter((inv: StockSucursal) => inv.productoId !== producto.id));
-    setMensajeNotif(`Producto "${producto.nombre}" eliminado correctamente.`);
-    setModalNotifAbierto(true);
+    try {
+      const { error } = await supabase.from('products').delete().eq('id', producto.id);
+      if (error) {
+        if (error.code === '23503') {
+          setMensajeNotif(`No se puede eliminar "${producto.nombre}" porque ya tiene historial relacionado en la base de datos. Cambie su estatus a Inactivo/Descontinuado para conservar la trazabilidad.`);
+          setModalNotifAbierto(true);
+          return;
+        }
+        throw error;
+      }
+      setCatalogoProductos(prev => prev.filter(p => p.id !== producto.id));
+      setMensajeNotif(`Producto "${producto.nombre}" eliminado de la base de datos.`);
+      setModalNotifAbierto(true);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible eliminar el producto: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
+    }
   };
 
   const normalizarSerie = (serie: string) => serie.trim().toUpperCase();
@@ -3974,17 +4259,69 @@ export default function DashboardPage() {
 
                       <div>
                         <label className="block text-slate-400 mb-1">Tipo de Movimiento / Salida *</label>
-                        <select value={tipoMovimientoMod} onChange={(e: any) => setTipoMovimientoMod(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
-                          <option value="Transferencia">🔄 Transferencia a otra sucursal</option>
+                        <select
+                          value={tipoMovimientoMod}
+                          onChange={(e: any) => {
+                            setTipoMovimientoMod(e.target.value);
+                            if (e.target.value !== 'Transferencia') {
+                              setSucursalDestinoMod('');
+                              setAlmacenDestinoMod('');
+                            }
+                          }}
+                          className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                        >
+                          {usuarioEsAdministrador && <option value="Transferencia">🔄 Transferencia a otra sucursal</option>}
                           <option value="Dañado">⚠️ Producto Dañado / Merma</option>
                           <option value="Salida">📤 Salida general de almacén</option>
                           <option value="Devolución">↩️ Devolución</option>
                         </select>
                       </div>
 
+                      {tipoMovimientoMod === 'Transferencia' && usuarioEsAdministrador && (
+                        <>
+                          <div>
+                            <label className="block text-slate-400 mb-1">Sucursal destino *</label>
+                            <select
+                              value={sucursalDestinoMod}
+                              onChange={(e) => {
+                                const nombre = e.target.value;
+                                setSucursalDestinoMod(nombre);
+                                const destino = sucursalesActivas.find(s => s.nombre === nombre);
+                                setAlmacenDestinoMod(destino?.almacenPrincipal || '');
+                              }}
+                              required
+                              className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                            >
+                              <option value="">-- Seleccione destino --</option>
+                              {sucursalesActivas.filter(s => s.nombre !== stockItemSeleccionado.sucursal).map(s => (
+                                <option key={s.id} value={s.nombre}>{s.nombre}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-slate-400 mb-1">Almacén destino *</label>
+                            <input
+                              type="text"
+                              value={almacenDestinoMod}
+                              onChange={(e) => setAlmacenDestinoMod(e.target.value)}
+                              required
+                              className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                            />
+                          </div>
+                        </>
+                      )}
+
                       <div>
                         <label className="block text-slate-400 mb-1">Cantidad *</label>
-                        <input type="number" min="1" max={stockItemSeleccionado.stockActual} value={cantidadMod} onChange={(e) => setCantidadMod(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono" />
+                        <input
+                          type="number"
+                          min="1"
+                          max={tipoMovimientoMod === 'Devolución' ? undefined : stockItemSeleccionado.stockActual}
+                          value={cantidadMod}
+                          onChange={(e) => setCantidadMod(e.target.value)}
+                          required
+                          className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono"
+                        />
                       </div>
 
                       <div>
@@ -4030,7 +4367,7 @@ export default function DashboardPage() {
                             <td className="p-4 font-mono text-xs text-center text-red-400">{inv.danados} un.</td>
                             <td className="p-4 font-mono text-xs text-center text-emerald-400">{formatearMoneda(prod ? prod.costoPromedio : 0)}</td>
                             <td className="p-4 text-center">
-                              <button type="button" onClick={() => { setStockItemSeleccionado(inv); setModalModificarStockAbierto(true); }} className="bg-amber-600 hover:bg-amber-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow cursor-pointer">
+                              <button type="button" onClick={() => { setStockItemSeleccionado(inv); setTipoMovimientoMod('Salida'); setCantidadMod('1'); setMotivoMod(''); setSucursalDestinoMod(''); setAlmacenDestinoMod(''); setModalModificarStockAbierto(true); }} className="bg-amber-600 hover:bg-amber-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow cursor-pointer">
                                 🔄 Modificar / Salida / Merma
                               </button>
                             </td>
