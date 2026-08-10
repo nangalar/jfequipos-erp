@@ -59,7 +59,7 @@ interface SerieValidacion {
   idInterno: string;
   sku: string;
   numeroSerie: string;
-  estatus: 'Disponible' | 'Vendida';
+  estatus: 'Disponible' | 'Reservada' | 'Vendida' | 'Inactiva';
 }
 
 interface MovimientoKardex {
@@ -225,9 +225,12 @@ interface ItemVenta {
   precioListaOriginal?: number;
   descuentoMontoFijo: number;
   fechaGarantia: string;
+  productoInventarioId?: number;
+  cantidadInventario?: number;
 }
 
 interface Cotizacion {
+  idDb?: number;
   folio: string;
   fechaCreacion: string;
   fechaExpiracion: string;
@@ -239,6 +242,7 @@ interface Cotizacion {
 }
 
 interface TicketGuardado {
+  idDb?: number;
   folio: string;
   fecha: string;
   cliente: string;
@@ -350,7 +354,7 @@ export default function DashboardPage() {
   const [nuevaCategoriaInput, setNuevaCategoriaInput] = useState<string>('');
 
   const [clientes, setClientes] = useState<Cliente[]>([]);
-  const [clienteSeleccionadoPOS, setClienteSeleccionadoPOS] = useState<string>('');
+  const [clienteSeleccionadoPOS, setClienteSeleccionadoPOS] = useState<string>('Público General');
   const [modalClienteAbierto, setModalClienteAbierto] = useState<boolean>(false);
   const [clienteEditando, setClienteEditando] = useState<Cliente | null>(null);
 
@@ -793,7 +797,7 @@ export default function DashboardPage() {
         .limit(1000),
       supabase
         .from('serial_registry')
-        .select('internal_id, sku, serial_number, status')
+        .select('internal_id, sku, serial_number, status, reserved_quote_folio, sold_ticket_folio')
     ]);
 
     if (prodResp.error) throw new Error(`Productos: ${prodResp.error.message}`);
@@ -811,8 +815,153 @@ export default function DashboardPage() {
       idInterno: String(s.internal_id || ''),
       sku: String(s.sku || ''),
       numeroSerie: String(s.serial_number || ''),
-      estatus: s.status === 'Vendida' ? 'Vendida' : 'Disponible'
+      estatus:
+        s.status === 'Vendida' ? 'Vendida' :
+        s.status === 'Reservada' ? 'Reservada' :
+        s.status === 'Inactiva' ? 'Inactiva' :
+        'Disponible'
     })));
+  };
+
+
+  const mapearItemOperacionDb = (row: any, sucursal: string): ItemVenta => {
+    const serial = String(row.serial_number || '');
+    return {
+      id: Number(row.inventory_product_id || row.product_id || 0),
+      lineaId: String(row.line_id || `${row.id || 'db'}-${Date.now()}`),
+      productoIdCatalogo: Number(row.product_id || 0),
+      codigo: String(row.sku || ''),
+      nombre: String(row.product_name || ''),
+      categoria: String(row.category || ''),
+      precio: Number(row.unit_price || 0),
+      costo: Number(row.unit_cost || 0),
+      stock: 0,
+      sucursal,
+      requiereSerie: row.requires_serial === true,
+      numeroSerie: row.requires_serial === true ? serial : 'N/A',
+      cantidadVendida: Number(row.quantity || 1),
+      esRegalo: row.is_gift === true,
+      esPaqueteComponente: row.is_package_component === true,
+      nombrePaqueteOrigen: row.package_name ? String(row.package_name) : undefined,
+      precioListaOriginal: row.original_list_price == null ? undefined : Number(row.original_list_price),
+      descuentoMontoFijo: Number(row.fixed_discount || 0),
+      fechaGarantia: row.warranty_until ? String(row.warranty_until) : 'Sin garantía',
+      productoInventarioId: Number(row.inventory_product_id || row.product_id || 0),
+      cantidadInventario: Number(row.inventory_quantity || 0)
+    };
+  };
+
+  const liberarCotizacionesVencidas = async () => {
+    const { data: branchRows, error: branchError } = await supabase
+      .from('branches')
+      .select('id, name')
+      .eq('status', 'Activa');
+
+    if (branchError) {
+      console.warn('No se pudieron consultar sucursales para liberar cotizaciones vencidas:', branchError.message);
+      return;
+    }
+
+    for (const branch of branchRows || []) {
+      const { error } = await supabase.rpc('quote_release_expired', {
+        p_branch_id: Number((branch as any).id)
+      });
+      if (error) {
+        // Un rol sin Ventas/Cotizaciones puede no tener permiso para esta función.
+        // No se interrumpe la carga de sus otros módulos.
+        if (!/permiso/i.test(error.message || '')) {
+          console.warn(`No se pudieron liberar cotizaciones vencidas de ${(branch as any).name || 'sucursal'}:`, error.message);
+        }
+      }
+    }
+  };
+
+  const cargarVentasCotizaciones = async () => {
+    const [quotesResp, salesResp] = await Promise.all([
+      supabase
+        .from('quotes')
+        .select(`
+          id, folio, created_at, expires_at, customer_id, customer_name,
+          branch_id, total, status, converted_sale_id,
+          branches(name),
+          quote_items(
+            id, line_id, product_id, sku, product_name, category,
+            unit_price, unit_cost, quantity, requires_serial, serial_number,
+            is_gift, is_package_component, package_name, original_list_price,
+            fixed_discount, warranty_until,
+            inventory_product_id, inventory_quantity, inventory_allocations
+          )
+        `)
+        .order('created_at', { ascending: false })
+        .limit(1000),
+      supabase
+        .from('sales')
+        .select(`
+          id, folio, sold_at, branch_id, customer_id, customer_name,
+          payment_method, subtotal_gross, discount_total, subtotal_net,
+          vat_included, total, quote_id,
+          branches(name),
+          sale_items(
+            id, line_id, product_id, sku, product_name, category,
+            unit_price, unit_cost, quantity, requires_serial, serial_number,
+            is_gift, is_package_component, package_name, original_list_price,
+            fixed_discount, warranty_until,
+            inventory_product_id, inventory_quantity, inventory_allocations
+          )
+        `)
+        .order('sold_at', { ascending: false })
+        .limit(1000)
+    ]);
+
+    if (quotesResp.error) throw new Error(`Cotizaciones: ${quotesResp.error.message}`);
+    if (salesResp.error) throw new Error(`Ventas: ${salesResp.error.message}`);
+
+    const cotizacionesDb: Cotizacion[] = (quotesResp.data || []).map((q: any): Cotizacion => {
+      const sucRel = relacionUnicaDb(q.branches);
+      const nombreSucursal = String(sucRel?.name || '');
+      const items = Array.isArray(q.quote_items)
+        ? q.quote_items.map((it: any) => mapearItemOperacionDb(it, nombreSucursal))
+        : [];
+      return {
+        idDb: Number(q.id),
+        folio: String(q.folio || ''),
+        fechaCreacion: q.created_at ? new Date(q.created_at).toLocaleString('es-MX') : '',
+        fechaExpiracion: q.expires_at ? new Date(q.expires_at).toLocaleString('es-MX') : '',
+        cliente: String(q.customer_name || 'Público General'),
+        sucursal: nombreSucursal,
+        items,
+        total: Number(q.total || 0),
+        estatus:
+          q.status === 'Autorizada' ? 'Autorizada' :
+          q.status === 'Expirada' || q.status === 'Cancelada' ? 'Expirada' :
+          'Pendiente'
+      };
+    }).filter((q: Cotizacion) => Boolean(q.sucursal));
+
+    const ventasDb: TicketGuardado[] = (salesResp.data || []).map((v: any) => {
+      const sucRel = relacionUnicaDb(v.branches);
+      const nombreSucursal = String(sucRel?.name || '');
+      const items = Array.isArray(v.sale_items)
+        ? v.sale_items.map((it: any) => mapearItemOperacionDb(it, nombreSucursal))
+        : [];
+      return {
+        idDb: Number(v.id),
+        folio: String(v.folio || ''),
+        fecha: v.sold_at ? new Date(v.sold_at).toLocaleString('es-MX') : '',
+        cliente: String(v.customer_name || 'Público General'),
+        metodoPago: String(v.payment_method || ''),
+        sucursal: nombreSucursal,
+        items,
+        subtotalBruto: Number(v.subtotal_gross || 0),
+        descuentoTotal: Number(v.discount_total || 0),
+        subtotalNeto: Number(v.subtotal_net || 0),
+        iva: Number(v.vat_included || 0),
+        total: Number(v.total || 0)
+      };
+    }).filter((v: TicketGuardado) => Boolean(v.sucursal));
+
+    setCotizaciones(cotizacionesDb);
+    setHistorialTickets(ventasDb);
   };
 
   const normalizarRolRelacion = (rel: any) => Array.isArray(rel) ? rel[0] : rel;
@@ -888,7 +1037,11 @@ export default function DashboardPage() {
 
     setUsuarioLogueado(usr);
     await cargarCatalogosSeguridad(usr);
-    await cargarProductosInventario();
+    await liberarCotizacionesVencidas();
+    await Promise.all([
+      cargarProductosInventario(),
+      cargarVentasCotizaciones()
+    ]);
     return usr;
   };
 
@@ -964,18 +1117,34 @@ export default function DashboardPage() {
     setInventarioSucursales([]);
     setKardexMovimientos([]);
     setSeriesValidacion([]);
+    setCotizaciones([]);
+    setHistorialTickets([]);
+    setTicketGenerado(null);
+    setVentaExitosa(false);
+    setCarrito([]);
+    setCotizacionOrigenPOS(null);
+    setClienteSeleccionadoPOS('Público General');
     setEmailLogin('');
     setPasswordLogin('');
     setModuloActivo('inicio');
     setMenuMovilAbierto(false);
   };
 
-  // Refresca datos persistentes al entrar a módulos que dependen de Productos/Inventario.
+  // Refresca datos persistentes al entrar a módulos operativos.
   useEffect(() => {
     if (!usuarioLogueado) return;
-    if (!['productos', 'inventario', 'ventas', 'cotizaciones', 'auditoria'].includes(moduloActivo)) return;
-    cargarProductosInventario().catch((error: any) => {
-      console.error('No fue posible refrescar Productos/Inventario:', error);
+    if (!['productos', 'inventario', 'ventas', 'cotizaciones', 'auditoria', 'historial', 'reportes', 'inicio'].includes(moduloActivo)) return;
+
+    const refrescarPersistencia = async () => {
+      await liberarCotizacionesVencidas();
+      await Promise.all([
+        cargarProductosInventario(),
+        cargarVentasCotizaciones()
+      ]);
+    };
+
+    refrescarPersistencia().catch((error: any) => {
+      console.error('No fue posible refrescar datos persistentes:', error);
     });
   }, [moduloActivo, usuarioLogueado?.id]);
 
@@ -1028,8 +1197,11 @@ export default function DashboardPage() {
   };
 
   const obtenerStockSucursal = (productoId: number, sucursal: string) => {
-    const reg = inventarioSucursales.find((i: StockSucursal) => i.productoId === productoId && i.sucursal === sucursal);
-    return reg ? reg.stockActual : 0;
+    // Disponible para venta/cotización = existencia física - apartados vigentes.
+    // Se suman todos los almacenes de la sucursal.
+    return inventarioSucursales
+      .filter((i: StockSucursal) => i.productoId === productoId && i.sucursal === sucursal)
+      .reduce((acc: number, i: StockSucursal) => acc + Math.max(0, i.stockActual - i.apartados), 0);
   };
 
   const registrarCategoriaNueva = async (e: React.FormEvent) => {
@@ -2112,6 +2284,11 @@ export default function DashboardPage() {
 
   const handleEscaneoDirecto = (e: React.FormEvent) => {
     e.preventDefault();
+    if (cotizacionOrigenPOS) {
+      setMensajeNotif('No puede agregar productos a una cotización ya emitida. Si requiere cambios, genere una nueva cotización.');
+      setModalNotifAbierto(true);
+      return;
+    }
     if (!sucursalActivaPOS) {
       setMensajeNotif('Seleccione una sucursal activa antes de agregar productos a la venta.');
       setModalNotifAbierto(true);
@@ -2214,6 +2391,11 @@ export default function DashboardPage() {
   };
 
   const agregarAlCarrito = (producto: ProductoCatalogo, esRegalo: boolean = false, stockDisp: number, serieFisica: string = '') => {
+    if (cotizacionOrigenPOS) {
+      setMensajeNotif('No puede agregar artículos a una cotización ya emitida. Genere una nueva cotización si requiere cambios.');
+      setModalNotifAbierto(true);
+      return;
+    }
     setVentaExitosa(false);
     setCarrito((prev: ItemVenta[]) => {
       const unidadesYaEnCarrito = prev
@@ -2258,13 +2440,20 @@ export default function DashboardPage() {
         esRegalo: Boolean(esRegalo),
         esPaqueteComponente: false,
         descuentoMontoFijo: 0.00,
-        fechaGarantia: calcularFechaGarantiaProducto(producto)
+        fechaGarantia: calcularFechaGarantiaProducto(producto),
+        productoInventarioId: producto.id,
+        cantidadInventario: 1
       };
       return [...prev, nuevoItem];
     });
   };
 
   const agregarPaqueteAlCarrito = (paquete: ProductoCatalogo, stockDisp: number) => {
+    if (cotizacionOrigenPOS) {
+      setMensajeNotif('No puede agregar paquetes a una cotización ya emitida. Genere una nueva cotización si requiere cambios.');
+      setModalNotifAbierto(true);
+      return;
+    }
     if (stockDisp <= 0) {
       setMensajeSinStock(`El paquete "${paquete.nombre}" no cuenta con stock disponible en la sucursal ${sucursalActivaPOS}.`);
       setModalSinStockAbierto(true);
@@ -2290,7 +2479,7 @@ export default function DashboardPage() {
 
     setCarrito((prev: ItemVenta[]) => {
       const nuevoCarrito = [...prev];
-      paquete.componentesPaquete!.forEach((comp) => {
+      paquete.componentesPaquete!.forEach((comp, compIndex) => {
         const precioProporcional = (comp.precioLista || 0) * factorProporcional;
         const prodComponente = catalogoProductos.find((p: ProductoCatalogo) => p.id === comp.productoId);
         const requiereSerie = Boolean(prodComponente?.manejaSerie);
@@ -2314,7 +2503,9 @@ export default function DashboardPage() {
           nombrePaqueteOrigen: paquete.nombre,
           precioListaOriginal: comp.precioLista,
           descuentoMontoFijo: 0.00,
-          fechaGarantia: prodComponente ? calcularFechaGarantiaProducto(prodComponente) : 'Sin garantía'
+          fechaGarantia: prodComponente ? calcularFechaGarantiaProducto(prodComponente) : 'Sin garantía',
+          productoInventarioId: paquete.id,
+          cantidadInventario: compIndex === 0 ? 1 : 0
         });
       });
       return nuevoCarrito;
@@ -2322,6 +2513,11 @@ export default function DashboardPage() {
   };
 
   const cambiarCantidad = (lineaId: string, delta: number) => {
+    if (cotizacionOrigenPOS) {
+      setMensajeNotif('Una cotización cargada para venta no puede cambiar cantidades. Si requiere cambios, genere una nueva cotización.');
+      setModalNotifAbierto(true);
+      return;
+    }
     setCarrito((prev: ItemVenta[]) =>
       prev
         .map((item: ItemVenta) => {
@@ -2337,10 +2533,20 @@ export default function DashboardPage() {
   };
 
   const quitarLineaCarrito = (lineaId: string) => {
+    if (cotizacionOrigenPOS) {
+      setMensajeNotif('No puede quitar líneas de una cotización ya emitida. Si requiere cambios, genere una nueva cotización.');
+      setModalNotifAbierto(true);
+      return;
+    }
     setCarrito((prev: ItemVenta[]) => prev.filter((item: ItemVenta) => item.lineaId !== lineaId));
   };
 
   const cambiarDescuentoMonto = (lineaId: string, valorTexto: string) => {
+    if (cotizacionOrigenPOS) {
+      setMensajeNotif('Una cotización cargada para venta no puede cambiar precios ni descuentos. Si requiere cambios, genere una nueva cotización.');
+      setModalNotifAbierto(true);
+      return;
+    }
     const monto = valorTexto === '' ? 0.00 : Number(valorTexto);
     setCarrito((prev: ItemVenta[]) =>
       prev.map((item: ItemVenta) =>
@@ -2380,16 +2586,32 @@ export default function DashboardPage() {
   };
 
   const calcularTotal = () => {
-    // Los precios capturados en el catálogo YA INCLUYEN IVA.
-    // El IVA se obtiene únicamente como dato informativo y nunca se vuelve a sumar al total.
-    const totalConIva = calcularSubtotalNeto();
-    const ivaIncluido = totalConIva - (totalConIva / 1.16);
+    // Los precios del catálogo YA INCLUYEN IVA.
+    // El IVA se muestra como parte incluida del total; nunca se suma otra vez.
+    const subtotalBruto = carrito.reduce((acc: number, item: ItemVenta) => {
+      if (item.esRegalo) return acc;
+      const base = item.esPaqueteComponente && item.precioListaOriginal != null
+        ? item.precioListaOriginal
+        : item.precio;
+      return acc + Math.max(0, Number(base || 0)) * Math.max(1, item.cantidadVendida || 1);
+    }, 0);
+
+    const subtotalNeto = carrito.reduce((acc: number, item: ItemVenta) => {
+      if (item.esRegalo) return acc;
+      const unitario = Math.max(0, Number(item.precio || 0));
+      const descuentoFijo = Math.min(unitario, Math.max(0, Number(item.descuentoMontoFijo || 0)));
+      return acc + Math.max(0, unitario - descuentoFijo) * Math.max(1, item.cantidadVendida || 1);
+    }, 0);
+
+    const descuentoTotal = Math.max(0, subtotalBruto - subtotalNeto);
+    const ivaIncluido = subtotalNeto - (subtotalNeto / 1.16);
+
     return {
-      subtotalBruto: calcularSubtotalSinDescuento(),
-      descuentoTotal: calcularTotalDescuentos(),
-      subtotalNeto: totalConIva,
+      subtotalBruto,
+      descuentoTotal,
+      subtotalNeto,
       iva: ivaIncluido,
-      total: totalConIva
+      total: subtotalNeto
     };
   };
 
@@ -2399,7 +2621,34 @@ export default function DashboardPage() {
       .reduce((acc: number, it: ItemVenta) => acc + (it.cantidadVendida || 0), 0);
   };
 
-  const generarCotizacion = () => {
+  const sucursalIdPorNombre = (nombre: string) =>
+    sucursales.find((s: Sucursal) => s.nombre === nombre)?.id || null;
+
+  const construirItemsOperacionDb = (items: ItemVenta[]) =>
+    items.map((it: ItemVenta) => ({
+      line_id: it.lineaId,
+      product_id: it.productoIdCatalogo || it.id,
+      inventory_product_id: it.productoInventarioId || (it.productoIdCatalogo || it.id),
+      inventory_quantity: it.esPaqueteComponente
+        ? Number(it.cantidadInventario || 0)
+        : Math.max(1, Number(it.cantidadVendida || 1)),
+      sku: it.codigo,
+      product_name: it.nombre,
+      category: it.categoria,
+      unit_price: Number(it.precio || 0),
+      unit_cost: Number(it.costo || 0),
+      quantity: Math.max(1, Number(it.cantidadVendida || 1)),
+      requires_serial: Boolean(it.requiereSerie),
+      serial_number: it.requiereSerie ? normalizarSerie(it.numeroSerie || '') : null,
+      is_gift: Boolean(it.esRegalo),
+      is_package_component: Boolean(it.esPaqueteComponente),
+      package_name: it.nombrePaqueteOrigen || null,
+      original_list_price: it.precioListaOriginal == null ? null : Number(it.precioListaOriginal),
+      fixed_discount: Number(it.descuentoMontoFijo || 0),
+      warranty_until: /^\d{4}-\d{2}-\d{2}$/.test(it.fechaGarantia || '') ? it.fechaGarantia : null
+    }));
+
+  const generarCotizacion = async () => {
     if (carrito.length === 0) return;
     if (!sucursalActivaPOS) {
       setMensajeNotif('Seleccione una sucursal activa antes de generar la cotización.');
@@ -2412,73 +2661,55 @@ export default function DashboardPage() {
       return;
     }
 
-    // Si se capturaron series antes de cotizar, deben ser únicas y no estar vendidas ni reservadas.
+    const branchId = sucursalIdPorNombre(sucursalActivaPOS);
+    if (!branchId) {
+      setMensajeNotif('No se encontró la sucursal seleccionada en la base de datos.');
+      setModalNotifAbierto(true);
+      return;
+    }
+
     const seriesCotizacion = carrito
       .filter((it: ItemVenta) => it.requiereSerie && normalizarSerie(it.numeroSerie || ''))
       .map((it: ItemVenta) => normalizarSerie(it.numeroSerie));
 
-    const serieDuplicadaCot = seriesCotizacion.find((serie: string, index: number) => seriesCotizacion.indexOf(serie) !== index);
+    const serieDuplicadaCot = seriesCotizacion.find(
+      (serie: string, index: number) => seriesCotizacion.indexOf(serie) !== index
+    );
     if (serieDuplicadaCot) {
       setMensajeNotif(`⚠️ No se puede generar la cotización. La serie ${serieDuplicadaCot} está repetida dentro de la misma cotización.`);
       setModalNotifAbierto(true);
       return;
     }
 
-    for (const serie of seriesCotizacion) {
-      const ventaAnterior = buscarSerieVendida(serie);
-      if (ventaAnterior) {
-        setMensajeNotif(`⚠️ No se puede cotizar la serie ${serie} porque ya fue vendida en el ticket ${ventaAnterior.ticket.folio}.`);
-        setModalNotifAbierto(true);
-        return;
-      }
-      const cotPendiente = buscarSerieEnCotizacionPendiente(serie, cotizacionOrigenPOS);
-      if (cotPendiente) {
-        setMensajeNotif(`⚠️ No se puede cotizar la serie ${serie} porque ya está reservada en la cotización pendiente ${cotPendiente.cotizacion.folio}.`);
-        setModalNotifAbierto(true);
-        return;
-      }
+    const folio = `COT-${Math.floor(100000 + Math.random() * 900000)}`;
+    const expiracionDate = new Date(Date.now() + 48 * 60 * 60 * 1000);
+    const clienteObj = clientes.find((c: Cliente) => c.nombreComercial === clienteSeleccionadoPOS) || null;
+
+    try {
+      const { data, error } = await supabase.rpc('quote_create', {
+        p_folio: folio,
+        p_customer_id: clienteObj?.id || null,
+        p_customer_name: clienteSeleccionadoPOS || 'Público General',
+        p_branch_id: branchId,
+        p_items: construirItemsOperacionDb(carrito),
+        p_expires_at: expiracionDate.toISOString()
+      });
+      if (error) throw error;
+
+      setCarrito([]);
+      setCotizacionOrigenPOS(null);
+      await Promise.all([cargarProductosInventario(), cargarVentasCotizaciones()]);
+
+      setMensajeNotif(
+        `¡Cotización ${String((data as any)?.folio || folio)} guardada en Supabase! ` +
+        'El stock quedó APARTADO por 48 horas sin reducir la existencia física. ' +
+        'La serie puede capturarse hasta el momento de concretar la venta.'
+      );
+      setModalNotifAbierto(true);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible generar la cotización: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
     }
-
-    const { total } = calcularTotal();
-
-    const ahora = new Date();
-    const fechaCreacionStr = ahora.toLocaleString();
-    const expiracionDate = new Date(ahora.getTime() + 48 * 60 * 60 * 1000);
-
-    // La cotización reserva cantidad, no números de serie físicos.
-    setInventarioSucursales((prevInv: StockSucursal[]) =>
-      prevInv.map((inv: StockSucursal) => {
-        const cantidadReservada = cantidadItemsPorProducto(carrito, inv.productoId, sucursalActivaPOS);
-        if (cantidadReservada > 0) {
-          return { ...inv, stockActual: Math.max(0, inv.stockActual - cantidadReservada) };
-        }
-        return inv;
-      })
-    );
-
-    const itemsCotizacion = carrito.map((it: ItemVenta) => ({
-      ...it,
-      // La serie no es obligatoria para cotizar. Si el usuario ya identificó físicamente
-      // una unidad y capturó su serie, se conserva y queda reservada por esta cotización.
-      numeroSerie: it.requiereSerie ? normalizarSerie(it.numeroSerie || '') : it.numeroSerie
-    }));
-
-    const nuevaCotizacion: Cotizacion = {
-      folio: `COT-${Math.floor(100000 + Math.random() * 900000)}`,
-      fechaCreacion: fechaCreacionStr,
-      fechaExpiracion: expiracionDate.toLocaleString(),
-      cliente: clienteSeleccionadoPOS,
-      sucursal: sucursalActivaPOS,
-      items: itemsCotizacion,
-      total,
-      estatus: 'Pendiente'
-    };
-
-    setCotizaciones(prev => [nuevaCotizacion, ...prev]);
-    setCarrito([]);
-    setCotizacionOrigenPOS(null);
-    setMensajeNotif(`¡Cotización ${nuevaCotizacion.folio} generada con éxito! El inventario quedó reservado por 48 horas. Las series físicas se capturarán únicamente al concretar la venta.`);
-    setModalNotifAbierto(true);
   };
 
   const autorizarCotizacion = (cot: Cotizacion) => {
@@ -2494,49 +2725,55 @@ export default function DashboardPage() {
       lineaId: it.lineaId || `cot-${cot.folio}-${index}-${Math.random().toString(36).slice(2, 8)}`,
       productoIdCatalogo: it.productoIdCatalogo || it.id,
       requiereSerie: Boolean(it.requiereSerie),
-      // Si la cotización ya reservó una serie, se conserva al pasar a Venta.
-      // Si no tenía serie, se captura físicamente antes de cobrar.
       numeroSerie: it.requiereSerie ? normalizarSerie(it.numeroSerie || '') : (it.numeroSerie || 'N/A')
     }));
 
     setCarrito(itemsParaVenta);
-    setClienteSeleccionadoPOS(cot.cliente);
+    setClienteSeleccionadoPOS(cot.cliente || 'Público General');
     setSucursalActivaPOS(cot.sucursal);
     setCotizacionOrigenPOS(cot.folio);
     setVentaExitosa(false);
     setModuloActivo('ventas');
-    setMensajeNotif(`Cotización ${cot.folio} cargada en Ventas. El stock ya está reservado; capture las series físicas de los equipos y después presione Cobrar Directo.`);
+    setMensajeNotif(
+      `Cotización ${cot.folio} cargada en Ventas. El stock está apartado en Supabase. ` +
+      'Capture las series físicas faltantes y presione Cobrar Directo. ' +
+      'No se pueden cambiar cantidades, precios ni descuentos de la cotización.'
+    );
     setModalNotifAbierto(true);
   };
 
-  const expirarCotizacion = (cot: Cotizacion) => {
+  const expirarCotizacion = async (cot: Cotizacion) => {
     if (cot.estatus !== 'Pendiente') return;
+    if (!cot.idDb) {
+      setMensajeNotif('No se encontró el identificador de la cotización en la base de datos.');
+      setModalNotifAbierto(true);
+      return;
+    }
     if (!puedeOperarSucursal(cot.sucursal)) {
       setMensajeNotif('No tiene permiso para modificar cotizaciones de otra sucursal.');
       setModalNotifAbierto(true);
       return;
     }
 
-    setInventarioSucursales((prevInv: StockSucursal[]) =>
-      prevInv.map((inv: StockSucursal) => {
-        const cantidadRegresar = cantidadItemsPorProducto(cot.items, inv.productoId, cot.sucursal);
-        if (cantidadRegresar > 0) {
-          return { ...inv, stockActual: inv.stockActual + cantidadRegresar };
-        }
-        return inv;
-      })
-    );
+    try {
+      const { error } = await supabase.rpc('quote_expire', { p_quote_id: cot.idDb });
+      if (error) throw error;
 
-    setCotizaciones(prev => prev.map(c => c.folio === cot.folio ? { ...c, estatus: 'Expirada' } : c));
-    if (cotizacionOrigenPOS === cot.folio) {
-      setCarrito([]);
-      setCotizacionOrigenPOS(null);
+      if (cotizacionOrigenPOS === cot.folio) {
+        setCarrito([]);
+        setCotizacionOrigenPOS(null);
+      }
+
+      await Promise.all([cargarProductosInventario(), cargarVentasCotizaciones()]);
+      setMensajeNotif(`La cotización ${cot.folio} fue expirada. Supabase liberó el stock apartado y cualquier serie reservada.`);
+      setModalNotifAbierto(true);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible expirar la cotización: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
     }
-    setMensajeNotif(`La cotización ${cot.folio} ha expirado y el stock ha sido regresado al inventario.`);
-    setModalNotifAbierto(true);
   };
 
-  const procesarVenta = () => {
+  const procesarVenta = async () => {
     if (carrito.length === 0) return;
     if (!sucursalActivaPOS) {
       setMensajeNotif('Seleccione una sucursal activa antes de cobrar la venta.');
@@ -2549,8 +2786,16 @@ export default function DashboardPage() {
       return;
     }
 
-    // 1) Toda unidad serializada debe tener una serie física antes del cobro.
-    const lineaSinSerie = carrito.find((it: ItemVenta) => it.requiereSerie && !normalizarSerie(it.numeroSerie || ''));
+    const branchId = sucursalIdPorNombre(sucursalActivaPOS);
+    if (!branchId) {
+      setMensajeNotif('No se encontró la sucursal seleccionada en la base de datos.');
+      setModalNotifAbierto(true);
+      return;
+    }
+
+    const lineaSinSerie = carrito.find(
+      (it: ItemVenta) => it.requiereSerie && !normalizarSerie(it.numeroSerie || '')
+    );
     if (lineaSinSerie) {
       abrirCapturaSerieCarrito(lineaSinSerie.lineaId);
       setMensajeNotif(`El artículo "${lineaSinSerie.nombre}" requiere capturar o escanear su número de serie físico antes de cobrar.`);
@@ -2558,161 +2803,77 @@ export default function DashboardPage() {
       return;
     }
 
-    // 2) Validación defensiva: no repetir series en la misma venta.
     const seriesVenta = carrito
       .filter((it: ItemVenta) => it.requiereSerie)
       .map((it: ItemVenta) => normalizarSerie(it.numeroSerie));
-    const serieDuplicada = seriesVenta.find((serie: string, index: number) => seriesVenta.indexOf(serie) !== index);
+
+    const serieDuplicada = seriesVenta.find(
+      (serie: string, index: number) => seriesVenta.indexOf(serie) !== index
+    );
     if (serieDuplicada) {
       setMensajeNotif(`⚠️ La serie ${serieDuplicada} está repetida dentro de la venta. Corrija la serie antes de cobrar.`);
       setModalNotifAbierto(true);
       return;
     }
 
-    // 3) No permitir vender nuevamente una serie ya vendida ni una serie reservada en otra cotización pendiente.
-    for (const serie of seriesVenta) {
-      const ventaAnterior = buscarSerieVendida(serie);
-      if (ventaAnterior) {
-        setMensajeNotif(`⚠️ La serie ${serie} ya fue vendida. Ticket: ${ventaAnterior.ticket.folio} | Cliente: ${ventaAnterior.ticket.cliente} | Fecha: ${ventaAnterior.ticket.fecha}.`);
-        setModalNotifAbierto(true);
-        return;
-      }
-      const cotPendiente = buscarSerieEnCotizacionPendiente(serie, cotizacionOrigenPOS);
-      if (cotPendiente) {
-        setMensajeNotif(`⚠️ La serie ${serie} está reservada en la cotización pendiente ${cotPendiente.cotizacion.folio}. No puede venderse en otra operación.`);
-        setModalNotifAbierto(true);
-        return;
-      }
+    const clienteObj = clientes.find((c: Cliente) => c.nombreComercial === clienteSeleccionadoPOS) || null;
+    if (metodoPagoSeleccionado === 'Crédito' && !clienteObj) {
+      setMensajeNotif('Una venta a Crédito requiere seleccionar un cliente registrado. Público General no puede comprar a crédito.');
+      setModalNotifAbierto(true);
+      return;
     }
 
-    const { subtotalBruto, descuentoTotal, subtotalNeto, iva, total } = calcularTotal();
     const folioTicket = `TICK-${Math.floor(100000 + Math.random() * 900000)}`;
-    
-    const clienteObj = clientes.find(c => c.nombreComercial === clienteSeleccionadoPOS);
-    if (metodoPagoSeleccionado === 'Crédito' && clienteObj) {
-      const nuevaDeudaTotal = clienteObj.saldoActualDeuda + total;
-      if (nuevaDeudaTotal > clienteObj.limiteCredito && !clienteObj.bloqueadoCredito) {
-        setClienteParaAutorizar(clienteObj);
-        setModalAutorizacionAbierto(true);
-        return;
-      }
-      if (clienteObj.bloqueadoCredito) {
-        setMensajeNotif(`⚠️ Venta BLOQUEADA: El cliente "${clienteObj.nombreComercial}" ha excedido su límite de crédito o tiene adeudos vencidos.`);
-        setModalNotifAbierto(true);
-        return;
-      }
-    }
 
-    // Una venta proveniente de cotización NO vuelve a descontar inventario: ya estaba reservado.
-    if (!cotizacionOrigenPOS) {
-      setInventarioSucursales((prevInv: StockSucursal[]) =>
-        prevInv.map((inv: StockSucursal) => {
-          const cantidadVendida = cantidadItemsPorProducto(carrito, inv.productoId, sucursalActivaPOS);
-          if (cantidadVendida > 0) {
-            const existAnt = inv.stockActual;
-            const existPost = Math.max(0, existAnt - cantidadVendida);
-            const prodObj = catalogoProductos.find(p => p.id === inv.productoId);
-            registrarMovimientoKardex(
-              prodObj ? prodObj.nombre : 'Producto',
-              inv.sucursal,
-              inv.almacen,
-              cantidadVendida,
-              'Venta',
-              existAnt,
-              existPost,
-              prodObj ? prodObj.costoPromedio : 0,
-              `Venta POS ${folioTicket}`,
-              `Cliente: ${clienteSeleccionadoPOS}`
-            );
-            return { ...inv, stockActual: existPost };
-          }
-          return inv;
-        })
-      );
-    } else {
-      // Aunque el stock ya estaba reservado, registramos la salida definitiva en Kardex.
-      const productosProcesados = new Set<number>();
-      carrito.forEach((it: ItemVenta) => {
-        if (it.esPaqueteComponente || productosProcesados.has(it.id)) return;
-        productosProcesados.add(it.id);
-        const cantidadVendida = cantidadItemsPorProducto(carrito, it.id, sucursalActivaPOS);
-        const inv = inventarioSucursales.find((x: StockSucursal) => x.productoId === it.id && x.sucursal === sucursalActivaPOS);
-        const prodObj = catalogoProductos.find(p => p.id === it.id);
-        registrarMovimientoKardex(
-          prodObj ? prodObj.nombre : it.nombre,
-          sucursalActivaPOS,
-          inv?.almacen || '',
-          cantidadVendida,
-          'Venta',
-          (inv?.stockActual || 0) + cantidadVendida,
-          inv?.stockActual || 0,
-          prodObj ? prodObj.costoPromedio : 0,
-          `Venta desde ${cotizacionOrigenPOS} / ${folioTicket}`,
-          `Cliente: ${clienteSeleccionadoPOS}`
-        );
+    try {
+      const { data, error } = await supabase.rpc('sale_create', {
+        p_folio: folioTicket,
+        p_customer_id: clienteObj?.id || null,
+        p_customer_name: clienteSeleccionadoPOS || 'Público General',
+        p_branch_id: branchId,
+        p_payment_method: metodoPagoSeleccionado,
+        p_items: construirItemsOperacionDb(carrito),
+        p_quote_folio: cotizacionOrigenPOS || null
       });
-    }
+      if (error) throw error;
 
-    if (metodoPagoSeleccionado === 'Crédito' && clienteObj) {
-      const fechaHoyStr = new Date().toISOString().split('T')[0];
-      const diasCred = clienteObj.diasCredito || 30;
-      const vencDate = new Date();
-      vencDate.setDate(vencDate.getDate() + diasCred);
-      const vencStr = vencDate.toISOString().split('T')[0];
-
-      const nuevaCxC: CuentaPorCobrar = {
-        id: Date.now(),
-        folioVenta: folioTicket,
-        clienteId: clienteObj.id,
-        clienteNombre: clienteObj.nombreComercial,
-        fechaEmision: fechaHoyStr,
-        fechaVencimiento: vencStr,
-        montoTotal: total,
-        montoPagado: 0.00,
-        saldoPendiente: total,
-        estatus: 'Pendiente',
-        promesaPago: 'Sin promesa registrada',
-        recordatorioEnviado: false,
-        notasCreditoAplicadas: 0.00,
-        abonos: []
+      const resultado = data as any;
+      const ticketInfo: TicketGuardado = {
+        idDb: Number(resultado?.sale_id || 0) || undefined,
+        folio: String(resultado?.folio || folioTicket),
+        fecha: new Date().toLocaleString('es-MX'),
+        cliente: clienteSeleccionadoPOS || 'Público General',
+        metodoPago: metodoPagoSeleccionado,
+        sucursal: sucursalActivaPOS,
+        items: carrito.map((it: ItemVenta) => ({
+          ...it,
+          numeroSerie: it.requiereSerie ? normalizarSerie(it.numeroSerie) : 'N/A'
+        })),
+        subtotalBruto: Number(resultado?.subtotal_gross || 0),
+        descuentoTotal: Number(resultado?.discount_total || 0),
+        subtotalNeto: Number(resultado?.subtotal_net || 0),
+        iva: Number(resultado?.vat_included || 0),
+        total: Number(resultado?.total || 0)
       };
 
-      setCuentasPorCobrar(prev => [nuevaCxC, ...prev]);
-      setClientes(prev => prev.map(cl => cl.id === clienteObj.id ? { ...cl, saldoActualDeuda: cl.saldoActualDeuda + total } : cl));
-    }
-
-    const ticketInfo: TicketGuardado = {
-      folio: folioTicket,
-      fecha: new Date().toLocaleString(),
-      cliente: clienteSeleccionadoPOS,
-      metodoPago: metodoPagoSeleccionado,
-      sucursal: sucursalActivaPOS,
-      items: carrito.map((it: ItemVenta) => ({
-        ...it,
-        numeroSerie: it.requiereSerie ? normalizarSerie(it.numeroSerie) : 'N/A'
-      })),
-      subtotalBruto,
-      descuentoTotal,
-      subtotalNeto,
-      iva,
-      total
-    };
-
-    setTicketGenerado(ticketInfo);
-    setHistorialTickets((prev: TicketGuardado[]) => [ticketInfo, ...prev]);
-    if (seriesVenta.length > 0) {
-      setSeriesValidacion((prev: SerieValidacion[]) => prev.map((reg: SerieValidacion) =>
-        seriesVenta.includes(normalizarSerie(reg.numeroSerie)) ? { ...reg, estatus: 'Vendida' } : reg
-      ));
-    }
-    setVentaExitosa(true);
-
-    if (cotizacionOrigenPOS) {
-      setCotizaciones(prev => prev.map(c => c.folio === cotizacionOrigenPOS ? { ...c, estatus: 'Autorizada' } : c));
+      setTicketGenerado(ticketInfo);
+      setVentaExitosa(true);
       setCotizacionOrigenPOS(null);
-    }
+      setCarrito([]);
 
-    setCarrito([]);
+      await Promise.all([cargarProductosInventario(), cargarVentasCotizaciones()]);
+
+      setMensajeNotif(
+        `✅ Venta ${ticketInfo.folio} guardada permanentemente. ` +
+        'Inventario, Kardex y números de serie fueron actualizados en Supabase. ' +
+        'El IVA ya estaba incluido en los precios y NO se sumó nuevamente.'
+      );
+      setModalNotifAbierto(true);
+    } catch (error: any) {
+      setVentaExitosa(false);
+      setMensajeNotif(`No fue posible registrar la venta: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
+    }
   };
 
   const ejecutarDescargaTicketPDF = (ticket: TicketGuardado) => {
@@ -5559,6 +5720,7 @@ export default function DashboardPage() {
                         onChange={(e) => setClienteSeleccionadoPOS(e.target.value)}
                         className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white font-medium"
                       >
+                        <option value="Público General">Público General</option>
                         {clientes.map((c: Cliente) => (
                           <option key={c.id} value={c.nombreComercial}>{c.nombreComercial} ({c.responsable})</option>
                         ))}
