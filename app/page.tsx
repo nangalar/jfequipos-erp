@@ -144,6 +144,8 @@ interface CuentaPorCobrar {
   folioVenta: string;
   clienteId: number;
   clienteNombre: string;
+  sucursalId?: number;
+  sucursal?: string;
   fechaEmision: string;
   fechaVencimiento: string;
   montoTotal: number;
@@ -168,6 +170,8 @@ interface CuentaPorPagar {
   folioFactura: string;
   proveedorId: number;
   proveedorNombre: string;
+  sucursalId?: number | null;
+  sucursal?: string;
   ordenCompra: string;
   clasificacionGasto: string;
   montoTotal: number;
@@ -479,6 +483,7 @@ export default function DashboardPage() {
   const [cxpGasto, setCxpGasto] = useState('Mantenimiento y Refacciones');
   const [cxpMonto, setCxpMonto] = useState('');
   const [cxpVencimiento, setCxpVencimiento] = useState('');
+  const [cxpSucursal, setCxpSucursal] = useState('');
 
   // Auditoría
   const [auditorias, setAuditorias] = useState<AuditoriaInventario[]>([]);
@@ -964,6 +969,189 @@ export default function DashboardPage() {
     setHistorialTickets(ventasDb);
   };
 
+
+  const mapearClienteDb = (row: any): Cliente => ({
+    id: Number(row.id),
+    nombreComercial: String(row.commercial_name || ''),
+    responsable: String(row.responsible_person || ''),
+    direccion: String(row.address || ''),
+    telefono: String(row.phone || ''),
+    email: String(row.email || ''),
+    limiteCredito: Number(row.credit_limit || 0),
+    diasCredito: Number(row.credit_days || 0),
+    saldoActualDeuda: Number(row.current_debt || 0),
+    bloqueadoCredito: row.credit_blocked === true
+  });
+
+  const mapearProveedorDb = (row: any): Proveedor => ({
+    id: Number(row.id),
+    razonSocial: String(row.legal_name || ''),
+    nombreComercial: String(row.commercial_name || ''),
+    rfc: String(row.rfc || ''),
+    direccion: String(row.address || ''),
+    contactos: String(row.contacts || ''),
+    telefonos: String(row.phones || ''),
+    correos: String(row.emails || ''),
+    banco: String(row.bank || ''),
+    cuentaClabe: String(row.clabe || ''),
+    titularCuenta: String(row.account_holder || ''),
+    moneda: String(row.currency || 'MXN'),
+    diasCredito: Number(row.credit_days || 0),
+    limiteCredito: Number(row.credit_limit || 0),
+    productosAsociados: Array.isArray(row.associated_products) ? row.associated_products.map(String) : [],
+    tiempoPromedioEntrega: String(row.average_delivery_time || ''),
+    estatus: row.status === 'Inactivo' ? 'Inactivo' : 'Activo'
+  });
+
+  const mapearCxCDb = (row: any): CuentaPorCobrar => {
+    const sucRel = relacionUnicaDb(row.branches);
+    const pagos: AbonoCxC[] = Array.isArray(row.receivable_payments)
+      ? row.receivable_payments
+          .map((p: any) => ({
+            id: Number(p.id),
+            fechaAbono: String(p.payment_date || ''),
+            monto: Number(p.amount || 0),
+            referencia: String(p.reference || ''),
+            reciboFolio: String(p.receipt_folio || '')
+          }))
+          .sort((a: AbonoCxC, b: AbonoCxC) => b.id - a.id)
+      : [];
+
+    const saldo = Number(row.pending_balance || 0);
+    const vencidaPorFecha =
+      saldo > 0 &&
+      row.due_date &&
+      String(row.due_date) < new Date().toISOString().split('T')[0];
+
+    const estatus: CuentaPorCobrar['estatus'] =
+      saldo <= 0 ? 'Pagada' :
+      vencidaPorFecha || row.status === 'Vencida' ? 'Vencida' :
+      Number(row.paid_amount || 0) > 0 || row.status === 'Parcial' ? 'Parcial' :
+      'Pendiente';
+
+    return {
+      id: Number(row.id),
+      folioVenta: String(row.sale_folio || ''),
+      clienteId: row.customer_id == null ? 0 : Number(row.customer_id),
+      clienteNombre: String(row.customer_name || ''),
+      sucursalId: Number(row.branch_id || 0),
+      sucursal: String(sucRel?.name || ''),
+      fechaEmision: String(row.issue_date || ''),
+      fechaVencimiento: String(row.due_date || ''),
+      montoTotal: Number(row.total_amount || 0),
+      montoPagado: Number(row.paid_amount || 0),
+      saldoPendiente: saldo,
+      estatus,
+      promesaPago: String(row.payment_promise || ''),
+      recordatorioEnviado: row.reminder_sent === true,
+      notasCreditoAplicadas: Number(row.credit_notes_applied || 0),
+      abonos: pagos
+    };
+  };
+
+  const mapearCxPDb = (row: any): CuentaPorPagar => {
+    const sucRel = relacionUnicaDb(row.branches);
+    const pagos: AbonoCxP[] = Array.isArray(row.payable_payments)
+      ? row.payable_payments
+          .map((p: any) => ({
+            id: Number(p.id),
+            fechaAbono: String(p.payment_date || ''),
+            montoAbono: Number(p.amount || 0),
+            referencia: String(p.reference || '')
+          }))
+          .sort((a: AbonoCxP, b: AbonoCxP) => b.id - a.id)
+      : [];
+
+    const saldo = Number(row.pending_balance || 0);
+    const vencidaPorFecha =
+      saldo > 0 &&
+      row.due_date &&
+      String(row.due_date) < new Date().toISOString().split('T')[0];
+
+    const estatus: CuentaPorPagar['estatus'] =
+      row.status === 'Cancelada' ? 'Cancelada' :
+      row.status === 'En revisión' ? 'En revisión' :
+      saldo <= 0 ? 'Pagada' :
+      vencidaPorFecha || row.status === 'Vencida' ? 'Vencida' :
+      Number(row.paid_amount || 0) > 0 || row.status === 'Parcialmente pagada'
+        ? 'Parcialmente pagada'
+        : 'Pendiente';
+
+    return {
+      id: Number(row.id),
+      folioFactura: String(row.invoice_folio || ''),
+      proveedorId: row.supplier_id == null ? 0 : Number(row.supplier_id),
+      proveedorNombre: String(row.supplier_name || ''),
+      sucursalId: row.branch_id == null ? null : Number(row.branch_id),
+      sucursal: String(sucRel?.name || ''),
+      ordenCompra: String(row.purchase_order || ''),
+      clasificacionGasto: String(row.expense_classification || ''),
+      montoTotal: Number(row.total_amount || 0),
+      montoPagado: Number(row.paid_amount || 0),
+      saldoPendiente: saldo,
+      fechaEmision: String(row.issue_date || ''),
+      fechaVencimiento: String(row.due_date || ''),
+      moneda: String(row.currency || 'MXN'),
+      estatus,
+      comprobanteUrl: String(row.receipt_url || ''),
+      historialAbonos: pagos
+    };
+  };
+
+  const refrescarVencimientosFinancieros = async () => {
+    const { error } = await supabase.rpc('finance_refresh_overdue');
+    if (error && !/permiso|permission|function.*does not exist/i.test(error.message || '')) {
+      console.warn('No se pudieron refrescar vencimientos financieros:', error.message);
+    }
+  };
+
+  const cargarClientesProveedoresFinanzas = async () => {
+    await refrescarVencimientosFinancieros();
+
+    const [clientesResp, proveedoresResp, cxcResp, cxpResp] = await Promise.all([
+      supabase
+        .from('customers')
+        .select('*')
+        .order('commercial_name'),
+      supabase
+        .from('suppliers')
+        .select('*')
+        .order('commercial_name'),
+      supabase
+        .from('accounts_receivable')
+        .select(`
+          id, sale_folio, branch_id, customer_id, customer_name,
+          issue_date, due_date, total_amount, paid_amount, pending_balance,
+          status, payment_promise, reminder_sent, credit_notes_applied,
+          branches(name),
+          receivable_payments(id, payment_date, amount, reference, receipt_folio, created_at)
+        `)
+        .order('created_at', { ascending: false })
+        .limit(1000),
+      supabase
+        .from('accounts_payable')
+        .select(`
+          id, invoice_folio, supplier_id, supplier_name, purchase_order,
+          expense_classification, total_amount, paid_amount, pending_balance,
+          issue_date, due_date, currency, status, receipt_url, branch_id,
+          branches(name),
+          payable_payments(id, payment_date, amount, reference, created_at)
+        `)
+        .order('created_at', { ascending: false })
+        .limit(1000)
+    ]);
+
+    if (clientesResp.error) throw new Error(`Clientes: ${clientesResp.error.message}`);
+    if (proveedoresResp.error) throw new Error(`Proveedores: ${proveedoresResp.error.message}`);
+    if (cxcResp.error) throw new Error(`CxC: ${cxcResp.error.message}`);
+    if (cxpResp.error) throw new Error(`CxP: ${cxpResp.error.message}`);
+
+    setClientes((clientesResp.data || []).map(mapearClienteDb));
+    setProveedores((proveedoresResp.data || []).map(mapearProveedorDb));
+    setCuentasPorCobrar((cxcResp.data || []).map(mapearCxCDb).filter((c: CuentaPorCobrar) => Boolean(c.sucursal)));
+    setCuentasPorPagar((cxpResp.data || []).map(mapearCxPDb));
+  };
+
   const normalizarRolRelacion = (rel: any) => Array.isArray(rel) ? rel[0] : rel;
 
   const cargarCatalogosSeguridad = async (usr: UsuarioSistema) => {
@@ -1040,7 +1228,8 @@ export default function DashboardPage() {
     await liberarCotizacionesVencidas();
     await Promise.all([
       cargarProductosInventario(),
-      cargarVentasCotizaciones()
+      cargarVentasCotizaciones(),
+      cargarClientesProveedoresFinanzas()
     ]);
     return usr;
   };
@@ -1119,6 +1308,10 @@ export default function DashboardPage() {
     setSeriesValidacion([]);
     setCotizaciones([]);
     setHistorialTickets([]);
+    setClientes([]);
+    setProveedores([]);
+    setCuentasPorCobrar([]);
+    setCuentasPorPagar([]);
     setTicketGenerado(null);
     setVentaExitosa(false);
     setCarrito([]);
@@ -1133,13 +1326,14 @@ export default function DashboardPage() {
   // Refresca datos persistentes al entrar a módulos operativos.
   useEffect(() => {
     if (!usuarioLogueado) return;
-    if (!['productos', 'inventario', 'ventas', 'cotizaciones', 'auditoria', 'historial', 'reportes', 'inicio'].includes(moduloActivo)) return;
+    if (!['productos', 'inventario', 'ventas', 'cotizaciones', 'clientes', 'proveedores', 'cxc', 'cxp', 'auditoria', 'historial', 'reportes', 'inicio'].includes(moduloActivo)) return;
 
     const refrescarPersistencia = async () => {
       await liberarCotizacionesVencidas();
       await Promise.all([
         cargarProductosInventario(),
-        cargarVentasCotizaciones()
+        cargarVentasCotizaciones(),
+        cargarClientesProveedoresFinanzas()
       ]);
     };
 
@@ -1160,6 +1354,7 @@ export default function DashboardPage() {
       if (sucursalIngreso) setSucursalIngreso('');
       if (almacenIngreso) setAlmacenIngreso('');
       if (gSuc) setGSuc('');
+      if (cxpSucursal) setCxpSucursal('');
       if (sucursalActivaPOS) setSucursalActivaPOS('');
       if (audValor) setAudValor('');
       if (sucursalReporte !== 'Todas') setSucursalReporte('Todas');
@@ -1172,6 +1367,9 @@ export default function DashboardPage() {
     }
     if (!gSuc || !disponibles.some(s => s.nombre === gSuc)) {
       setGSuc(primera.nombre);
+    }
+    if (!cxpSucursal || !disponibles.some(s => s.nombre === cxpSucursal)) {
+      setCxpSucursal(primera.nombre);
     }
     if (!sucursalActivaPOS || !disponibles.some(s => s.nombre === sucursalActivaPOS)) {
       setSucursalActivaPOS(primera.nombre);
@@ -1253,50 +1451,56 @@ export default function DashboardPage() {
     setComponentesSeleccionadosPaquete(prev => prev.filter((_, i) => i !== index));
   };
 
-  const guardarCliente = (e: React.FormEvent) => {
+  const guardarCliente = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!cNombreComercial || !cResponsable) return;
+    if (!cNombreComercial.trim() || !cResponsable.trim()) return;
 
-    if (clienteEditando) {
-      setClientes(prev => prev.map(c => c.id === clienteEditando.id ? {
-        ...c,
-        nombreComercial: cNombreComercial,
-        responsable: cResponsable,
-        direccion: cDireccion,
-        telefono: cTelefono,
-        email: cEmail,
-        limiteCredito: Number(cLimiteCredito) || 100000,
-        diasCredito: Number(cDiasCredito) || 30
-      } : c));
-      setClienteEditando(null);
-      setMensajeNotif('¡Cliente actualizado con éxito!');
-      setModalNotifAbierto(true);
-    } else {
-      const nuevoCliente: Cliente = {
-        id: Date.now(),
-        nombreComercial: cNombreComercial,
-        responsable: cResponsable,
-        direccion: cDireccion,
-        telefono: cTelefono,
-        email: cEmail,
-        limiteCredito: Number(cLimiteCredito) || 100000,
-        diasCredito: Number(cDiasCredito) || 30,
-        saldoActualDeuda: 0,
-        bloqueadoCredito: false
+    try {
+      const payload = {
+        commercial_name: cNombreComercial.trim(),
+        responsible_person: cResponsable.trim(),
+        address: cDireccion.trim(),
+        phone: cTelefono.trim(),
+        email: cEmail.trim().toLowerCase(),
+        credit_limit: Math.max(0, Number(cLimiteCredito) || 0),
+        credit_days: Math.max(0, Number(cDiasCredito) || 0),
+        updated_at: new Date().toISOString()
       };
-      setClientes(prev => [nuevoCliente, ...prev]);
-      setMensajeNotif('¡Cliente registrado con éxito!');
+
+      if (clienteEditando) {
+        const { error } = await supabase
+          .from('customers')
+          .update(payload)
+          .eq('id', clienteEditando.id);
+        if (error) throw error;
+        setMensajeNotif('Cliente actualizado y guardado en la base de datos.');
+      } else {
+        const { error } = await supabase
+          .from('customers')
+          .insert({
+            ...payload,
+            current_debt: 0,
+            credit_blocked: false
+          });
+        if (error) throw error;
+        setMensajeNotif('Cliente registrado y guardado en la base de datos.');
+      }
+
+      await cargarClientesProveedoresFinanzas();
+      setClienteEditando(null);
+      setModalClienteAbierto(false);
+      setCNombreComercial('');
+      setCResponsable('');
+      setCDireccion('');
+      setCTelefono('');
+      setCEmail('');
+      setCLimiteCredito('100000');
+      setCDiasCredito('30');
+      setModalNotifAbierto(true);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible guardar el cliente: ${error?.message || String(error)}`);
       setModalNotifAbierto(true);
     }
-
-    setModalClienteAbierto(false);
-    setCNombreComercial('');
-    setCResponsable('');
-    setCDireccion('');
-    setCTelefono('');
-    setCEmail('');
-    setCLimiteCredito('100000');
-    setCDiasCredito('30');
   };
 
   const abrirEdicionCliente = (cli: Cliente) => {
@@ -1829,83 +2033,230 @@ export default function DashboardPage() {
     setModalNotifAbierto(true);
   };
 
-  const registrarFacturaCxP = (e: React.FormEvent) => {
+  const registrarFacturaCxP = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!cxpMonto) return;
+    if (!cxpMonto || !cxpVencimiento) return;
+
+    const sucObj = sucursales.find((s: Sucursal) => s.nombre === cxpSucursal && s.estatus === 'Activa');
+    if (!sucObj) {
+      setMensajeNotif('Seleccione una sucursal activa para registrar la cuenta por pagar.');
+      setModalNotifAbierto(true);
+      return;
+    }
+    if (!puedeOperarSucursal(cxpSucursal)) {
+      setMensajeNotif('No tiene permiso para registrar cuentas por pagar en otra sucursal.');
+      setModalNotifAbierto(true);
+      return;
+    }
 
     const provObj = proveedores.find(p => p.id === Number(cxpProvId));
     const monto = Number(cxpMonto) || 0;
-    const folioGenerado = cxpFolio.trim() !== '' ? cxpFolio.trim() : `GASTO-SIN-FAC-${Math.floor(1000 + Math.random() * 9000)}`;
+    if (monto <= 0) return;
 
-    const nuevaCxP: CuentaPorPagar = {
-      id: Date.now(),
-      folioFactura: folioGenerado,
-      proveedorId: provObj ? provObj.id : 1,
-      proveedorNombre: provObj ? provObj.nombreComercial : 'Proveedor General',
-      ordenCompra: cxpOC.trim() || 'OC-S/N',
-      clasificacionGasto: cxpGasto,
-      montoTotal: monto,
-      montoPagado: 0.00,
-      saldoPendiente: monto,
-      fechaEmision: new Date().toISOString().split('T')[0],
-      fechaVencimiento: cxpVencimiento,
-      moneda: 'MXN',
-      estatus: 'Pendiente',
-      comprobanteUrl: 'sin_comprobante.pdf',
-      historialAbonos: []
-    };
+    const folioGenerado = cxpFolio.trim() !== ''
+      ? cxpFolio.trim()
+      : `GASTO-SIN-FAC-${Date.now()}`;
 
-    setCuentasPorPagar(prev => [nuevaCxP, ...prev]);
-    setModalCxPAbierto(false);
-    setCxpFolio('');
-    setCxpMonto('');
-    setMensajeNotif('¡Factura o Gasto registrado en Cuentas por Pagar con éxito!');
-    setModalNotifAbierto(true);
+    try {
+      const { error } = await supabase
+        .from('accounts_payable')
+        .insert({
+          invoice_folio: folioGenerado,
+          supplier_id: provObj?.id || null,
+          supplier_name: provObj?.nombreComercial || 'Proveedor General',
+          purchase_order: cxpOC.trim() || 'OC-S/N',
+          expense_classification: cxpGasto.trim(),
+          total_amount: monto,
+          paid_amount: 0,
+          pending_balance: monto,
+          issue_date: new Date().toISOString().split('T')[0],
+          due_date: cxpVencimiento,
+          currency: provObj?.moneda || 'MXN',
+          status: 'Pendiente',
+          receipt_url: '',
+          branch_id: sucObj.id,
+          updated_at: new Date().toISOString()
+        });
+
+      if (error) throw error;
+
+      await cargarClientesProveedoresFinanzas();
+      setModalCxPAbierto(false);
+      setCxpFolio('');
+      setCxpProvId('');
+      setCxpOC('');
+      setCxpMonto('');
+      setCxpVencimiento('');
+      setMensajeNotif('Cuenta por pagar registrada y guardada en la base de datos.');
+      setModalNotifAbierto(true);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible registrar la cuenta por pagar: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
+    }
   };
 
-  const realizarPagoCxP = (e: React.FormEvent) => {
+  const realizarPagoCxP = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!cuentaSeleccionadaPago || !montoAbono || !fechaAbonoInput) return;
 
     const abono = Number(montoAbono) || 0;
     if (abono <= 0) return;
+    if (abono > cuentaSeleccionadaPago.saldoPendiente) {
+      setMensajeNotif('El pago no puede ser mayor al saldo pendiente.');
+      setModalNotifAbierto(true);
+      return;
+    }
 
-    const nuevoAbonoReg: AbonoCxP = {
-      id: Date.now(),
-      fechaAbono: fechaAbonoInput,
-      montoAbono: abono,
-      referencia: referenciaAbonoInput.trim() || 'Abono General'
-    };
+    try {
+      const { error } = await supabase.rpc('payable_apply_payment', {
+        p_payable_id: cuentaSeleccionadaPago.id,
+        p_amount: abono,
+        p_payment_date: fechaAbonoInput,
+        p_reference: referenciaAbonoInput.trim() || 'Abono General'
+      });
 
-    setCuentasPorPagar(prev => prev.map(c => {
-      if (c.id === cuentaSeleccionadaPago.id) {
-        const nuevoPagado = c.montoPagado + abono;
-        const nuevoSaldo = Math.max(0, c.montoTotal - nuevoPagado);
-        let nuevoEstatus: CuentaPorPagar['estatus'] = c.estatus;
+      if (error) throw error;
 
-        if (nuevoSaldo === 0) {
-          nuevoEstatus = 'Pagada';
-        } else if (nuevoPagado > 0) {
-          nuevoEstatus = 'Parcialmente pagada';
-        }
+      await cargarClientesProveedoresFinanzas();
+      setModalPagoAbierto(false);
+      setCuentaSeleccionadaPago(null);
+      setMontoAbono('');
+      setReferenciaAbonoInput('SPEI Banco');
+      setMensajeNotif(`Pago por ${formatearMoneda(abono)} registrado y guardado en la base de datos.`);
+      setModalNotifAbierto(true);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible registrar el pago: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
+    }
+  };
 
-        return {
-          ...c,
-          montoPagado: nuevoPagado,
-          saldoPendiente: nuevoSaldo,
-          estatus: nuevoEstatus,
-          historialAbonos: [...(c.historialAbonos || []), nuevoAbonoReg]
-        };
-      }
-      return c;
-    }));
 
-    setModalPagoAbierto(false);
-    setCuentaSeleccionadaPago(null);
-    setMontoAbono('');
-    setReferenciaAbonoInput('SPEI Banco');
-    setMensajeNotif(`¡Pago por ${formatearMoneda(abono)} con fecha ${fechaAbonoInput} registrado con éxito!`);
-    setModalNotifAbierto(true);
+  const aplicarAbonoCxC = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cuentaCxCSeleccionada) return;
+
+    const montoNum = Number(montoAbonoCxC) || 0;
+    if (montoNum <= 0) return;
+    if (montoNum > cuentaCxCSeleccionada.saldoPendiente) {
+      setMensajeNotif('El abono no puede ser mayor al saldo pendiente.');
+      setModalNotifAbierto(true);
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase.rpc('receivable_apply_payment', {
+        p_receivable_id: cuentaCxCSeleccionada.id,
+        p_amount: montoNum,
+        p_payment_date: fechaAbonoCxC,
+        p_reference: refAbonoCxC.trim() || 'Pago Cliente'
+      });
+
+      if (error) throw error;
+
+      const resultado: any = Array.isArray(data) ? data[0] : data;
+      const recibo = {
+        id: Number(resultado?.payment_id || Date.now()),
+        fechaAbono: fechaAbonoCxC,
+        monto: montoNum,
+        referencia: refAbonoCxC.trim() || 'Pago Cliente',
+        reciboFolio: String(resultado?.receipt_folio || ''),
+        folioVenta: cuentaCxCSeleccionada.folioVenta,
+        cliente: cuentaCxCSeleccionada.clienteNombre
+      };
+
+      await cargarClientesProveedoresFinanzas();
+      setReciboUltimoGenerado(recibo);
+      setModalAbonoCxCAbierto(false);
+      setMontoAbonoCxC('');
+      setModalReciboAbierto(true);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible aplicar el pago: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
+    }
+  };
+
+  const guardarPromesaCxC = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cuentaCxCSeleccionada) return;
+
+    try {
+      const { error } = await supabase.rpc('receivable_set_promise', {
+        p_receivable_id: cuentaCxCSeleccionada.id,
+        p_promise: textoPromesaInput.trim()
+      });
+      if (error) throw error;
+
+      await cargarClientesProveedoresFinanzas();
+      setModalPromesaAbierto(false);
+      setMensajeNotif('Promesa de pago registrada en la base de datos.');
+      setModalNotifAbierto(true);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible guardar la promesa: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
+    }
+  };
+
+  const aplicarNotaCreditoCxC = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cuentaCxCSeleccionada) return;
+
+    const montoNC = Number(montoNotaCredito) || 0;
+    if (montoNC <= 0) return;
+    if (montoNC > cuentaCxCSeleccionada.saldoPendiente) {
+      setMensajeNotif('La nota de crédito no puede ser mayor al saldo pendiente.');
+      setModalNotifAbierto(true);
+      return;
+    }
+
+    try {
+      const { error } = await supabase.rpc('receivable_apply_credit_note', {
+        p_receivable_id: cuentaCxCSeleccionada.id,
+        p_amount: montoNC
+      });
+      if (error) throw error;
+
+      await cargarClientesProveedoresFinanzas();
+      setModalNotaCreditoAbierto(false);
+      setMontoNotaCredito('');
+      setMensajeNotif(`Nota de crédito por ${formatearMoneda(montoNC)} aplicada y guardada.`);
+      setModalNotifAbierto(true);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible aplicar la nota de crédito: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
+    }
+  };
+
+  const marcarRecordatorioCxC = async (cuenta: CuentaPorCobrar) => {
+    try {
+      const { error } = await supabase.rpc('receivable_mark_reminder', {
+        p_receivable_id: cuenta.id
+      });
+      if (error) throw error;
+      await cargarClientesProveedoresFinanzas();
+      setMensajeNotif(`📧 Recordatorio de cobro marcado como enviado para "${cuenta.clienteNombre}".`);
+      setModalNotifAbierto(true);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible registrar el recordatorio: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
+    }
+  };
+
+  const autorizarCreditoCliente = async (cliente: Cliente) => {
+    try {
+      const { error } = await supabase
+        .from('customers')
+        .update({ credit_blocked: false, updated_at: new Date().toISOString() })
+        .eq('id', cliente.id);
+      if (error) throw error;
+
+      await cargarClientesProveedoresFinanzas();
+      setModalAutorizacionAbierto(false);
+      setMensajeNotif(`Autorización especial concedida para "${cliente.nombreComercial}".`);
+      setModalNotifAbierto(true);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible autorizar el crédito: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
+    }
   };
 
   const validarRFCValido = (rfcStr: string) => {
@@ -1913,9 +2264,9 @@ export default function DashboardPage() {
     return rfcRegex.test(rfcStr.toUpperCase().trim());
   };
 
-  const guardarProveedor = (e: React.FormEvent) => {
+  const guardarProveedor = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!pRazonSocial || !pNombreComercial) return;
+    if (!pRazonSocial.trim() || !pNombreComercial.trim()) return;
 
     if (!validarRFCValido(pRfc)) {
       setMensajeNotif('⚠️ Error: El RFC ingresado no tiene un formato válido para México (debe tener 12 o 13 caracteres alfanuméricos oficiales).');
@@ -1923,56 +2274,57 @@ export default function DashboardPage() {
       return;
     }
 
-    if (proveedorEditando) {
-      setProveedores(prev => prev.map(p => p.id === proveedorEditando.id ? {
-        ...p,
-        razonSocial: pRazonSocial,
-        nombreComercial: pNombreComercial,
-        rfc: pRfc.toUpperCase().trim(),
-        direccion: pDireccion,
-        contactos: pContactos,
-        telefonos: pTelefonos,
-        correos: pCorreos,
-        banco: pBanco,
-        cuentaClabe: pCuentaClabe,
-        titularCuenta: pTitularCuenta,
-        moneda: pMoneda,
-        diasCredito: Number(pDiasCredito) || 0,
-        limiteCredito: Number(pLimiteCredito) || 0,
-        productosAsociados: pProductosAsociados,
-        tiempoPromedioEntrega: pTiempoEntrega,
-        estatus: pEstatus
-      } : p));
-      setProveedorEditando(null);
-      setMensajeNotif('¡Proveedor actualizado con éxito!');
+    if (pCuentaClabe.trim() && !/^\d{18}$/.test(pCuentaClabe.trim())) {
+      setMensajeNotif('⚠️ La CLABE debe contener exactamente 18 dígitos.');
       setModalNotifAbierto(true);
-    } else {
-      const nuevoProv: Proveedor = {
-        id: Date.now(),
-        razonSocial: pRazonSocial,
-        nombreComercial: pNombreComercial,
-        rfc: pRfc.toUpperCase().trim(),
-        direccion: pDireccion,
-        contactos: pContactos,
-        telefonos: pTelefonos,
-        correos: pCorreos,
-        banco: pBanco,
-        cuentaClabe: pCuentaClabe,
-        titularCuenta: pTitularCuenta,
-        moneda: pMoneda,
-        diasCredito: Number(pDiasCredito) || 0,
-        limiteCredito: Number(pLimiteCredito) || 0,
-        productosAsociados: pProductosAsociados,
-        tiempoPromedioEntrega: pTiempoEntrega,
-        estatus: pEstatus
-      };
-      setProveedores(prev => [nuevoProv, ...prev]);
-      setMensajeNotif('¡Proveedor registrado con éxito!');
-      setModalNotifAbierto(true);
+      return;
     }
 
-    setModalProveedorAbierto(false);
-    limpiarFormularioProveedor();
+    try {
+      const payload = {
+        legal_name: pRazonSocial.trim(),
+        commercial_name: pNombreComercial.trim(),
+        rfc: pRfc.toUpperCase().trim(),
+        address: pDireccion.trim(),
+        contacts: pContactos.trim(),
+        phones: pTelefonos.trim(),
+        emails: pCorreos.trim().toLowerCase(),
+        bank: pBanco.trim(),
+        clabe: pCuentaClabe.trim(),
+        account_holder: pTitularCuenta.trim(),
+        currency: pMoneda,
+        credit_days: Math.max(0, Number(pDiasCredito) || 0),
+        credit_limit: Math.max(0, Number(pLimiteCredito) || 0),
+        associated_products: pProductosAsociados,
+        average_delivery_time: pTiempoEntrega.trim(),
+        status: pEstatus,
+        updated_at: new Date().toISOString()
+      };
+
+      if (proveedorEditando) {
+        const { error } = await supabase
+          .from('suppliers')
+          .update(payload)
+          .eq('id', proveedorEditando.id);
+        if (error) throw error;
+        setMensajeNotif('Proveedor actualizado y guardado en la base de datos.');
+      } else {
+        const { error } = await supabase
+          .from('suppliers')
+          .insert(payload);
+        if (error) throw error;
+        setMensajeNotif('Proveedor registrado y guardado en la base de datos.');
+      }
+
+      await cargarClientesProveedoresFinanzas();
+      setProveedorEditando(null);
+      setModalProveedorAbierto(false);
+      limpiarFormularioProveedor();
+      setModalNotifAbierto(true);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible guardar el proveedor: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
+    }
   };
 
   const abrirEdicionProveedor = (prov: Proveedor) => {
@@ -2698,7 +3050,7 @@ export default function DashboardPage() {
 
       setCarrito([]);
       setCotizacionOrigenPOS(null);
-      await Promise.all([cargarProductosInventario(), cargarVentasCotizaciones()]);
+      await Promise.all([cargarProductosInventario(), cargarVentasCotizaciones(), cargarClientesProveedoresFinanzas()]);
 
       setMensajeNotif(
         `¡Cotización ${String((data as any)?.folio || folio)} guardada en Supabase! ` +
@@ -2764,7 +3116,7 @@ export default function DashboardPage() {
         setCotizacionOrigenPOS(null);
       }
 
-      await Promise.all([cargarProductosInventario(), cargarVentasCotizaciones()]);
+      await Promise.all([cargarProductosInventario(), cargarVentasCotizaciones(), cargarClientesProveedoresFinanzas()]);
       setMensajeNotif(`La cotización ${cot.folio} fue expirada. Supabase liberó el stock apartado y cualquier serie reservada.`);
       setModalNotifAbierto(true);
     } catch (error: any) {
@@ -2861,7 +3213,7 @@ export default function DashboardPage() {
       setCotizacionOrigenPOS(null);
       setCarrito([]);
 
-      await Promise.all([cargarProductosInventario(), cargarVentasCotizaciones()]);
+      await Promise.all([cargarProductosInventario(), cargarVentasCotizaciones(), cargarClientesProveedoresFinanzas()]);
 
       setMensajeNotif(
         `✅ Venta ${ticketInfo.folio} guardada permanentemente. ` +
@@ -4899,46 +5251,7 @@ export default function DashboardPage() {
                       <button type="button" onClick={() => setModalAbonoCxCAbierto(false)} className="text-red-400 font-bold text-xs bg-red-950/40 px-3 py-1 rounded-lg border border-red-800 cursor-pointer">✕ Cerrar</button>
                     </div>
 
-                    <form onSubmit={(e) => {
-                      e.preventDefault();
-                      const montoNum = Number(montoAbonoCxC) || 0;
-                      if (montoNum <= 0) return;
-
-                      const nuevoAbono: AbonoCxC = {
-                        id: Date.now(),
-                        fechaAbono: fechaAbonoCxC,
-                        monto: montoNum,
-                        referencia: refAbonoCxC,
-                        reciboFolio: `REC-${Math.floor(1000 + Math.random() * 9000)}`
-                      };
-
-                      setCuentasPorCobrar(prev => prev.map(c => {
-                        if (c.id === cuentaCxCSeleccionada.id) {
-                          const nuevoPagado = c.montoPagado + montoNum;
-                          const nuevoSaldo = Math.max(0, c.montoTotal - nuevoPagado);
-                          return {
-                            ...c,
-                            montoPagado: nuevoPagado,
-                            saldoPendiente: nuevoSaldo,
-                            estatus: nuevoSaldo === 0 ? 'Pagada' : 'Parcial',
-                            abonos: [...c.abonos, nuevoAbono]
-                          };
-                        }
-                        return c;
-                      }));
-
-                      setClientes(prev => prev.map(cl => {
-                        if (cl.nombreComercial === cuentaCxCSeleccionada.clienteNombre) {
-                          return { ...cl, saldoActualDeuda: Math.max(0, cl.saldoActualDeuda - montoNum) };
-                        }
-                        return cl;
-                      }));
-
-                      setReciboUltimoGenerado({ ...nuevoAbono, folioVenta: cuentaCxCSeleccionada.folioVenta, cliente: cuentaCxCSeleccionada.clienteNombre });
-                      setModalAbonoCxCAbierto(false);
-                      setMontoAbonoCxC('');
-                      setModalReciboAbierto(true);
-                    }} className="space-y-3 text-xs">
+                    <form onSubmit={aplicarAbonoCxC} className="space-y-3 text-xs">
                       <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-1">
                         <p className="text-slate-400">Cliente: <strong className="text-white">{cuentaCxCSeleccionada.clienteNombre}</strong></p>
                         <p className="text-slate-400">Folio Venta: <strong className="text-blue-400 font-mono">{cuentaCxCSeleccionada.folioVenta}</strong></p>
@@ -4996,13 +5309,7 @@ export default function DashboardPage() {
                       <button type="button" onClick={() => setModalPromesaAbierto(false)} className="text-red-400 font-bold text-xs bg-red-950/40 px-3 py-1 rounded-lg border border-red-800 cursor-pointer">✕ Cerrar</button>
                     </div>
 
-                    <form onSubmit={(e) => {
-                      e.preventDefault();
-                      setCuentasPorCobrar(prev => prev.map(c => c.id === cuentaCxCSeleccionada.id ? { ...c, promesaPago: textoPromesaInput } : c));
-                      setModalPromesaAbierto(false);
-                      setMensajeNotif('¡Promesa de pago registrada con éxito!');
-                      setModalNotifAbierto(true);
-                    }} className="space-y-3 text-xs">
+                    <form onSubmit={guardarPromesaCxC} className="space-y-3 text-xs">
                       <textarea
                         value={textoPromesaInput}
                         onChange={(e) => setTextoPromesaInput(e.target.value)}
@@ -5029,29 +5336,7 @@ export default function DashboardPage() {
                       <button type="button" onClick={() => setModalNotaCreditoAbierto(false)} className="text-red-400 font-bold text-xs bg-red-950/40 px-3 py-1 rounded-lg border border-red-800 cursor-pointer">✕ Cerrar</button>
                     </div>
 
-                    <form onSubmit={(e) => {
-                      e.preventDefault();
-                      const montoNC = Number(montoNotaCredito) || 0;
-                      if (montoNC <= 0) return;
-
-                      setCuentasPorCobrar(prev => prev.map(c => {
-                        if (c.id === cuentaCxCSeleccionada.id) {
-                          const nuevoSaldo = Math.max(0, c.saldoPendiente - montoNC);
-                          return {
-                            ...c,
-                            notasCreditoAplicadas: c.notasCreditoAplicadas + montoNC,
-                            saldoPendiente: nuevoSaldo,
-                            estatus: nuevoSaldo === 0 ? 'Pagada' : c.estatus
-                          };
-                        }
-                        return c;
-                      }));
-
-                      setModalNotaCreditoAbierto(false);
-                      setMontoNotaCredito('');
-                      setMensajeNotif(`¡Nota de crédito por ${formatearMoneda(montoNC)} aplicada con éxito a la cuenta!`);
-                      setModalNotifAbierto(true);
-                    }} className="space-y-3 text-xs">
+                    <form onSubmit={aplicarNotaCreditoCxC} className="space-y-3 text-xs">
                       <div>
                         <label className="block text-slate-400 mb-1">Monto de la Nota de Crédito *</label>
                         <input type="number" step="0.01" max={cuentaCxCSeleccionada.saldoPendiente} value={montoNotaCredito} onChange={(e) => setMontoNotaCredito(e.target.value)} required className="w-full bg-slate-950 border border-purple-600 rounded-xl px-3 py-2 text-white font-mono text-sm" autoFocus />
@@ -5075,12 +5360,7 @@ export default function DashboardPage() {
                     </p>
                     <div className="flex gap-2 pt-2">
                       <button type="button" onClick={() => setModalAutorizacionAbierto(false)} className="flex-1 bg-slate-800 text-slate-300 py-2 rounded-xl text-xs cursor-pointer">Cancelar</button>
-                      <button type="button" onClick={() => {
-                        setClientes(prev => prev.map(cl => cl.id === clienteParaAutorizar.id ? { ...cl, bloqueadoCredito: false } : cl));
-                        setModalAutorizacionAbierto(false);
-                        setMensajeNotif(`¡Autorización especial concedida para "${clienteParaAutorizar.nombreComercial}"! Ya puede proceder al cobro.`);
-                        setModalNotifAbierto(true);
-                      }} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-xl text-xs cursor-pointer">Autorizar Venta</button>
+                      <button type="button" onClick={() => autorizarCreditoCliente(clienteParaAutorizar)} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-xl text-xs cursor-pointer">Autorizar Venta</button>
                     </div>
                   </div>
                 </div>
@@ -5118,6 +5398,7 @@ export default function DashboardPage() {
                     <thead>
                       <tr className="border-b border-slate-800 text-slate-400 uppercase bg-slate-950/50">
                         <th className="p-3">Folio Venta</th>
+                        <th className="p-3">Sucursal</th>
                         <th className="p-3">Cliente</th>
                         <th className="p-3">Límite / Días Crédito</th>
                         <th className="p-3">Emisión ➔ Venc.</th>
@@ -5133,6 +5414,7 @@ export default function DashboardPage() {
                         return (
                           <tr key={cxc.id} className="hover:bg-slate-800/40">
                             <td className="p-3 font-mono text-blue-400 font-bold">{cxc.folioVenta}</td>
+                            <td className="p-3 text-slate-300">{cxc.sucursal || '—'}</td>
                             <td className="p-3 font-bold text-white">
                               {cxc.clienteNombre}
                               <span className="block text-[10px] text-slate-400 font-normal">Estado de cuenta verificado</span>
@@ -5162,7 +5444,7 @@ export default function DashboardPage() {
                               <button type="button" onClick={() => { setCuentaCxCSeleccionada(cxc); setModalNotaCreditoAbierto(true); }} className="bg-purple-600 hover:bg-purple-500 text-white px-2.5 py-1 rounded font-bold cursor-pointer">
                                 📄 Nota Cr.
                               </button>
-                              <button type="button" onClick={() => { setMensajeNotif(`📧 Recordatorio de cobro enviado por correo y WhatsApp a "${cxc.clienteNombre}".`); setModalNotifAbierto(true); }} className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1 rounded font-bold cursor-pointer" title="Enviar recordatorio de cobro">
+                              <button type="button" onClick={() => marcarRecordatorioCxC(cxc)} className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1 rounded font-bold cursor-pointer" title="Marcar recordatorio de cobro como enviado">
                                 🔔 Recordar
                               </button>
                             </td>
@@ -5219,6 +5501,15 @@ export default function DashboardPage() {
                       <div>
                         <label className="block text-slate-400 mb-1">Folio de factura / documento</label>
                         <input type="text" value={cxpFolio} onChange={(e) => setCxpFolio(e.target.value)} placeholder="FAC-001 (opcional)" className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Sucursal *</label>
+                        <select value={cxpSucursal} onChange={(e) => setCxpSucursal(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
+                          <option value="">-- Seleccionar sucursal --</option>
+                          {sucursales
+                            .filter((s: Sucursal) => s.estatus === 'Activa' && puedeOperarSucursal(s.nombre))
+                            .map((s: Sucursal) => <option key={s.id} value={s.nombre}>{s.nombre}</option>)}
+                        </select>
                       </div>
                       <div>
                         <label className="block text-slate-400 mb-1">Proveedor</label>
@@ -5317,12 +5608,13 @@ export default function DashboardPage() {
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse text-xs">
                       <thead><tr className="bg-slate-950/60 text-slate-400 uppercase border-b border-slate-800">
-                        <th className="p-3">Factura</th><th className="p-3">Proveedor</th><th className="p-3">Clasificación</th><th className="p-3">Vencimiento</th><th className="p-3">Total</th><th className="p-3">Pagado</th><th className="p-3">Saldo</th><th className="p-3">Estatus</th><th className="p-3 text-center">Acciones</th>
+                        <th className="p-3">Factura</th><th className="p-3">Sucursal</th><th className="p-3">Proveedor</th><th className="p-3">Clasificación</th><th className="p-3">Vencimiento</th><th className="p-3">Total</th><th className="p-3">Pagado</th><th className="p-3">Saldo</th><th className="p-3">Estatus</th><th className="p-3 text-center">Acciones</th>
                       </tr></thead>
                       <tbody className="divide-y divide-slate-800/60">
                         {cuentasPorPagar.map(cuenta => (
                           <tr key={cuenta.id} className="hover:bg-slate-800/40">
                             <td className="p-3 font-mono text-blue-400 font-bold">{cuenta.folioFactura}</td>
+                            <td className="p-3 text-slate-300">{cuenta.sucursal || '—'}</td>
                             <td className="p-3 text-white font-semibold">{cuenta.proveedorNombre}</td>
                             <td className="p-3 text-slate-300">{cuenta.clasificacionGasto}</td>
                             <td className="p-3 text-slate-300 font-mono">{cuenta.fechaVencimiento}</td>
