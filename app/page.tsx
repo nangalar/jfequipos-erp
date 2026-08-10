@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { supabase } from '@/lib/supabase';
 
 interface ProductoCatalogo {
   id: number;
@@ -252,7 +253,7 @@ interface TicketGuardado {
 }
 
 interface UsuarioSistema {
-  id: number;
+  id: string;
   nombre: string;
   email: string;
   password: string;
@@ -262,6 +263,7 @@ interface UsuarioSistema {
 }
 
 interface RolPermisos {
+  id?: number;
   nombreRol: string;
   modulosPermitidos: string[];
 }
@@ -310,15 +312,11 @@ export default function DashboardPage() {
   const [vistaRecuperacion, setVistaRecuperacion] = useState<boolean>(false);
   const [emailRecuperacion, setEmailRecuperacion] = useState<string>('');
 
-  const [usuariosSistema, setUsuariosSistema] = useState<UsuarioSistema[]>([
-    { id: 1, nombre: 'Administrador', email: 'admin@jfequipos.com', password: 'admin123', rol: 'Administrador', sucursalId: null, activo: true }
-  ]);
+  // Usuarios, roles y sucursales se cargan desde Supabase después de autenticar.
+  // No se precargan usuarios operativos ni sucursales: el Administrador los crea en producción.
+  const [usuariosSistema, setUsuariosSistema] = useState<UsuarioSistema[]>([]);
 
-  const [rolesSistema, setRolesSistema] = useState<RolPermisos[]>([
-    { nombreRol: 'Administrador', modulosPermitidos: ['inicio', 'productos', 'inventario', 'sucursales', 'clientes', 'proveedores', 'cxc', 'cxp', 'gastos', 'auditoria', 'cotizaciones', 'ventas', 'reportes', 'historial', 'usuarios'] },
-    { nombreRol: 'Operador / Ventas', modulosPermitidos: ['inicio', 'productos', 'clientes', 'cotizaciones', 'ventas', 'historial'] },
-    { nombreRol: 'Cajero', modulosPermitidos: ['ventas', 'historial'] }
-  ]);
+  const [rolesSistema, setRolesSistema] = useState<RolPermisos[]>([]);
 
   const [rolEditandoPermisos, setRolEditandoPermisos] = useState<RolPermisos | null>(null);
   const [modalPermisosAbierto, setModalPermisosAbierto] = useState<boolean>(false);
@@ -625,50 +623,170 @@ export default function DashboardPage() {
     };
   }, [camaraActiva, camaraAltaActiva, camaraInventarioActiva, camaraAuditoriaActiva]);
 
-  // SESIÓN PERSISTENTE: conserva al usuario autenticado aunque se recargue la página.
-  // Por seguridad no guardamos la contraseña en localStorage.
-  useEffect(() => {
-    try {
-      const sesionGuardada = window.localStorage.getItem('jfequipos_sesion_activa');
-      if (sesionGuardada) {
-        const sesion = JSON.parse(sesionGuardada);
-        if (sesion && sesion.id && sesion.email && sesion.rol) {
-          setUsuarioLogueado({
-            id: Number(sesion.id),
-            nombre: String(sesion.nombre || ''),
-            email: String(sesion.email),
-            password: '',
-            rol: String(sesion.rol),
-            sucursalId: sesion.sucursalId === null || sesion.sucursalId === undefined
-              ? null
-              : Number(sesion.sucursalId),
-            activo: sesion.activo !== false
-          });
-        }
-      }
-    } catch (error) {
-      console.error('No fue posible restaurar la sesión:', error);
-      window.localStorage.removeItem('jfequipos_sesion_activa');
-    } finally {
-      setSesionCargada(true);
-    }
-  }, []);
+  // ============================================================
+  // SUPABASE AUTH + CATÁLOGOS DE SEGURIDAD
+  // ============================================================
+  const mapearSucursalDb = (row: any): Sucursal => ({
+    id: Number(row.id),
+    clave: String(row.code || ''),
+    nombre: String(row.name || ''),
+    tipo: row.branch_type === 'Matriz' ? 'Matriz' : 'Sucursal',
+    direccion: String(row.address || ''),
+    estado: String(row.state || ''),
+    municipio: String(row.municipality || ''),
+    codigoPostal: String(row.postal_code || ''),
+    telefono: String(row.phone || ''),
+    responsable: String(row.manager || ''),
+    correo: String(row.email || ''),
+    almacenPrincipal: String(row.main_warehouse || ''),
+    estatus: row.status === 'Inactiva' ? 'Inactiva' : 'Activa',
+    fechaAlta: row.created_at ? String(row.created_at).slice(0, 10) : ''
+  });
 
-  const guardarSesionLocal = (usr: UsuarioSistema) => {
-    const sesionSinPassword = {
-      id: usr.id,
-      nombre: usr.nombre,
-      email: usr.email,
-      rol: usr.rol,
-      sucursalId: usr.sucursalId ?? null,
-      activo: usr.activo
-    };
-    window.localStorage.setItem('jfequipos_sesion_activa', JSON.stringify(sesionSinPassword));
+  const normalizarRolRelacion = (rel: any) => Array.isArray(rel) ? rel[0] : rel;
+
+  const cargarCatalogosSeguridad = async (usr: UsuarioSistema) => {
+    const [rolesResp, sucResp] = await Promise.all([
+      supabase.from('roles').select('id, name, allowed_modules').order('id'),
+      supabase.from('branches').select('*').order('name')
+    ]);
+
+    if (rolesResp.error) throw new Error(`No se pudieron cargar los roles: ${rolesResp.error.message}`);
+    if (sucResp.error) throw new Error(`No se pudieron cargar las sucursales: ${sucResp.error.message}`);
+
+    const rolesMapeados: RolPermisos[] = (rolesResp.data || []).map((r: any) => ({
+      id: Number(r.id),
+      nombreRol: String(r.name),
+      modulosPermitidos: Array.isArray(r.allowed_modules) ? r.allowed_modules.map(String) : []
+    }));
+    setRolesSistema(rolesMapeados);
+
+    const sucursalesMapeadas = (sucResp.data || []).map(mapearSucursalDb);
+    setSucursales(sucursalesMapeadas);
+
+    if (usr.rol === 'Administrador') {
+      const { data: perfiles, error: perfilesError } = await supabase
+        .from('profiles')
+        .select('id, full_name, email, branch_id, active, roles(name)')
+        .order('full_name');
+
+      if (perfilesError) throw new Error(`No se pudieron cargar los usuarios: ${perfilesError.message}`);
+
+      setUsuariosSistema((perfiles || []).map((p: any) => {
+        const rolRel = normalizarRolRelacion(p.roles);
+        return {
+          id: String(p.id),
+          nombre: String(p.full_name || ''),
+          email: String(p.email || ''),
+          password: '',
+          rol: String(rolRel?.name || ''),
+          sucursalId: p.branch_id == null ? null : Number(p.branch_id),
+          activo: p.active !== false
+        };
+      }));
+    } else {
+      setUsuariosSistema([usr]);
+    }
   };
 
-  const cerrarSesion = () => {
-    window.localStorage.removeItem('jfequipos_sesion_activa');
+  const cargarUsuarioDesdeSupabase = async (userId: string): Promise<UsuarioSistema> => {
+    const { data: perfil, error } = await supabase
+      .from('profiles')
+      .select('id, full_name, email, branch_id, active, roles(name)')
+      .eq('id', userId)
+      .single();
+
+    if (error || !perfil) {
+      throw new Error(error?.message || 'El usuario no tiene un perfil asignado en el ERP.');
+    }
+
+    const rolRel = normalizarRolRelacion((perfil as any).roles);
+    const usr: UsuarioSistema = {
+      id: String((perfil as any).id),
+      nombre: String((perfil as any).full_name || ''),
+      email: String((perfil as any).email || ''),
+      password: '',
+      rol: String(rolRel?.name || ''),
+      sucursalId: (perfil as any).branch_id == null ? null : Number((perfil as any).branch_id),
+      activo: (perfil as any).active !== false
+    };
+
+    if (!usr.activo) throw new Error('Este usuario se encuentra inactivo.');
+    if (!usr.rol) throw new Error('Este usuario no tiene un rol asignado.');
+
+    setUsuarioLogueado(usr);
+    await cargarCatalogosSeguridad(usr);
+    return usr;
+  };
+
+  useEffect(() => {
+    let cancelado = false;
+
+    const restaurarSesion = async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        if (!cancelado && data.session?.user) {
+          await cargarUsuarioDesdeSupabase(data.session.user.id);
+        }
+      } catch (error: any) {
+        console.error('No fue posible restaurar la sesión de Supabase:', error);
+        await supabase.auth.signOut();
+        if (!cancelado) setUsuarioLogueado(null);
+      } finally {
+        if (!cancelado) setSesionCargada(true);
+      }
+    };
+
+    restaurarSesion();
+    return () => { cancelado = true; };
+  }, []);
+
+  const iniciarSesionSupabase = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: emailLogin.trim().toLowerCase(),
+        password: passwordLogin
+      });
+      if (error) throw error;
+      if (!data.user) throw new Error('No se pudo obtener el usuario autenticado.');
+
+      const usr = await cargarUsuarioDesdeSupabase(data.user.id);
+      const rolRefLogin = rolesSistema.find(r => r.nombreRol === usr.rol);
+      const primerModulo = usr.rol === 'Administrador'
+        ? 'inicio'
+        : (rolRefLogin?.modulosPermitidos.includes('inicio') ? 'inicio' : rolRefLogin?.modulosPermitidos[0] || 'ventas');
+      setModuloActivo(primerModulo);
+      setPasswordLogin('');
+    } catch (error: any) {
+      await supabase.auth.signOut();
+      setUsuarioLogueado(null);
+      alert(`No fue posible iniciar sesión: ${error?.message || String(error)}`);
+    }
+  };
+
+  const enviarRecuperacionSupabase = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const correo = emailRecuperacion.trim().toLowerCase();
+    if (!correo) return;
+    const redirectTo = `${window.location.origin}/auth/set-password`;
+    const { error } = await supabase.auth.resetPasswordForEmail(correo, { redirectTo });
+    if (error) {
+      alert(`No fue posible enviar el correo de recuperación: ${error.message}`);
+      return;
+    }
+    alert('Si el correo está registrado, recibirá instrucciones para crear una nueva contraseña.');
+    setVistaRecuperacion(false);
+    setEmailRecuperacion('');
+  };
+
+  const cerrarSesion = async () => {
+    await supabase.auth.signOut();
     setUsuarioLogueado(null);
+    setUsuariosSistema([]);
+    setRolesSistema([]);
+    setSucursales([]);
     setEmailLogin('');
     setPasswordLogin('');
     setModuloActivo('inicio');
@@ -862,7 +980,7 @@ export default function DashboardPage() {
     setModalSucursalAbierto(true);
   };
 
-  const guardarSucursal = (e: React.FormEvent) => {
+  const guardarSucursal = async (e: React.FormEvent) => {
     e.preventDefault();
 
     const claveLimpia = sClave.trim().toUpperCase();
@@ -893,79 +1011,83 @@ export default function DashboardPage() {
       return;
     }
 
-    if (sucursalEditando) {
-      const nombreAnterior = sucursalEditando.nombre;
-      if (nombreAnterior !== nombreLimpio && sucursalTieneMovimientos(nombreAnterior)) {
-        setMensajeNotif('No se puede cambiar el nombre de una sucursal que ya tiene inventario, ventas, gastos o movimientos. Puede editar sus demás datos o inactivarla.');
-        setModalNotifAbierto(true);
-        return;
-      }
-
-      const actualizada: Sucursal = {
-        ...sucursalEditando,
-        clave: claveLimpia,
-        nombre: nombreLimpio,
-        tipo: sTipo,
-        direccion: sDireccion.trim(),
-        estado: sEstado.trim(),
-        municipio: sMunicipio.trim(),
-        codigoPostal: sCodigoPostal.trim(),
-        telefono: sTelefono.trim(),
-        responsable: sResponsable.trim(),
-        correo: sCorreo.trim(),
-        almacenPrincipal: almacenLimpio,
-        estatus: sEstatus
-      };
-
-      setSucursales(prev => prev.map(s => s.id === actualizada.id ? actualizada : s));
-
-      if (nombreAnterior !== nombreLimpio) {
-        if (sucursalIngreso === nombreAnterior) setSucursalIngreso(nombreLimpio);
-        if (gSuc === nombreAnterior) setGSuc(nombreLimpio);
-        if (sucursalActivaPOS === nombreAnterior) setSucursalActivaPOS(nombreLimpio);
-        if (audValor === nombreAnterior) setAudValor(nombreLimpio);
-        if (sucursalReporte === nombreAnterior) setSucursalReporte(nombreLimpio);
-      }
-
-      if (sucursalIngreso === nombreLimpio) {
-        setAlmacenIngreso(almacenLimpio);
-      }
-
-      setMensajeNotif(`Sucursal "${nombreLimpio}" actualizada con éxito.`);
-    } else {
-      const nuevaSucursal: Sucursal = {
-        id: Date.now(),
-        clave: claveLimpia,
-        nombre: nombreLimpio,
-        tipo: sTipo,
-        direccion: sDireccion.trim(),
-        estado: sEstado.trim(),
-        municipio: sMunicipio.trim(),
-        codigoPostal: sCodigoPostal.trim(),
-        telefono: sTelefono.trim(),
-        responsable: sResponsable.trim(),
-        correo: sCorreo.trim(),
-        almacenPrincipal: almacenLimpio,
-        estatus: sEstatus,
-        fechaAlta: new Date().toISOString().split('T')[0]
-      };
-
-      setSucursales(prev => [nuevaSucursal, ...prev]);
-      setMensajeNotif(`Sucursal "${nombreLimpio}" registrada con éxito.`);
+    if (sucursalEditando && sucursalEditando.nombre !== nombreLimpio && sucursalTieneMovimientos(sucursalEditando.nombre)) {
+      setMensajeNotif('No se puede cambiar el nombre de una sucursal que ya tiene inventario, ventas, gastos o movimientos. Puede editar sus demás datos o inactivarla.');
+      setModalNotifAbierto(true);
+      return;
     }
 
-    setModalSucursalAbierto(false);
-    limpiarFormularioSucursal();
-    setModalNotifAbierto(true);
+    const payload = {
+      code: claveLimpia,
+      name: nombreLimpio,
+      branch_type: sTipo,
+      address: sDireccion.trim(),
+      state: sEstado.trim(),
+      municipality: sMunicipio.trim(),
+      postal_code: sCodigoPostal.trim(),
+      phone: sTelefono.trim(),
+      manager: sResponsable.trim(),
+      email: sCorreo.trim(),
+      main_warehouse: almacenLimpio,
+      status: sEstatus
+    };
+
+    try {
+      if (sucursalEditando) {
+        const nombreAnterior = sucursalEditando.nombre;
+        const { data, error } = await supabase
+          .from('branches')
+          .update(payload)
+          .eq('id', sucursalEditando.id)
+          .select('*')
+          .single();
+        if (error) throw error;
+        const actualizada = mapearSucursalDb(data);
+        setSucursales(prev => prev.map(s => s.id === actualizada.id ? actualizada : s));
+
+        if (nombreAnterior !== nombreLimpio) {
+          if (sucursalIngreso === nombreAnterior) setSucursalIngreso(nombreLimpio);
+          if (gSuc === nombreAnterior) setGSuc(nombreLimpio);
+          if (sucursalActivaPOS === nombreAnterior) setSucursalActivaPOS(nombreLimpio);
+          if (audValor === nombreAnterior) setAudValor(nombreLimpio);
+          if (sucursalReporte === nombreAnterior) setSucursalReporte(nombreLimpio);
+        }
+        if (sucursalIngreso === nombreLimpio) setAlmacenIngreso(almacenLimpio);
+        setMensajeNotif(`Sucursal "${nombreLimpio}" actualizada y guardada en la base de datos.`);
+      } else {
+        const { data, error } = await supabase
+          .from('branches')
+          .insert(payload)
+          .select('*')
+          .single();
+        if (error) throw error;
+        const nuevaSucursal = mapearSucursalDb(data);
+        setSucursales(prev => [nuevaSucursal, ...prev]);
+        setMensajeNotif(`Sucursal "${nombreLimpio}" registrada en la base de datos.`);
+      }
+
+      setModalSucursalAbierto(false);
+      limpiarFormularioSucursal();
+      setModalNotifAbierto(true);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible guardar la sucursal: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
+    }
   };
 
-  const cambiarEstatusSucursal = (sucursal: Sucursal) => {
+  const cambiarEstatusSucursal = async (sucursal: Sucursal) => {
     const nuevoEstatus: Sucursal['estatus'] = sucursal.estatus === 'Activa' ? 'Inactiva' : 'Activa';
+    const { error } = await supabase.from('branches').update({ status: nuevoEstatus }).eq('id', sucursal.id);
+    if (error) {
+      setMensajeNotif(`No fue posible cambiar el estatus de la sucursal: ${error.message}`);
+      setModalNotifAbierto(true);
+      return;
+    }
     setSucursales(prev => prev.map(s => s.id === sucursal.id ? { ...s, estatus: nuevoEstatus } : s));
     setMensajeNotif(
       nuevoEstatus === 'Activa'
-        ? `Sucursal "${sucursal.nombre}" activada. Ya puede utilizarse en la operación.`
-        : `Sucursal "${sucursal.nombre}" inactivada. Su historial se conserva, pero ya no aparecerá para nuevas operaciones.`
+        ? `Sucursal "${sucursal.nombre}" activada.`
+        : `Sucursal "${sucursal.nombre}" inactivada. Su historial se conserva.`
     );
     setModalNotifAbierto(true);
   };
@@ -2517,15 +2639,43 @@ export default function DashboardPage() {
     setUsuarioEditando(usuario);
     setNuevoNombreUsr(usuario.nombre);
     setNuevoEmailUsr(usuario.email);
-    setNuevoPassUsr(usuario.password);
+    setNuevoPassUsr('');
     setNuevoRolUsr(usuario.rol);
     setNuevaSucursalUsrId(usuario.sucursalId ? String(usuario.sucursalId) : '');
     setModalUsuarioAbierto(true);
   };
 
-  const guardarUsuarioSistema = (e: React.FormEvent) => {
+  const llamarApiUsuarios = async (method: 'POST' | 'PATCH', body: any) => {
+    const { data: sesionData } = await supabase.auth.getSession();
+    const token = sesionData.session?.access_token;
+    if (!token) throw new Error('La sesión del Administrador no está disponible.');
+
+    const resp = await fetch('/api/admin/users', {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify(body)
+    });
+    const resultado = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(resultado?.error || 'No fue posible completar la operación de usuario.');
+    return resultado;
+  };
+
+  const guardarUsuarioSistema = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!nuevoNombreUsr.trim() || !nuevoEmailUsr.trim() || !nuevoPassUsr.trim()) return;
+    if (!nuevoNombreUsr.trim() || !nuevoEmailUsr.trim()) return;
+    if (!usuarioEditando && nuevoPassUsr.trim().length < 8) {
+      setMensajeNotif('La contraseña temporal debe tener al menos 8 caracteres.');
+      setModalNotifAbierto(true);
+      return;
+    }
+    if (usuarioEditando && nuevoPassUsr.trim() && nuevoPassUsr.trim().length < 8) {
+      setMensajeNotif('Si desea cambiar la contraseña, debe tener al menos 8 caracteres.');
+      setModalNotifAbierto(true);
+      return;
+    }
 
     const rolAdministrador = nuevoRolUsr === 'Administrador';
     const sucursalIdSeleccionada = rolAdministrador ? null : Number(nuevaSucursalUsrId);
@@ -2554,32 +2704,75 @@ export default function DashboardPage() {
       return;
     }
 
-    if (usuarioEditando) {
-      setUsuariosSistema(prev => prev.map(u => u.id === usuarioEditando.id ? {
-        ...u,
-        nombre: nuevoNombreUsr.trim(),
-        email: correoNormalizado,
-        password: nuevoPassUsr,
-        rol: nuevoRolUsr,
-        sucursalId: sucursalIdSeleccionada
-      } : u));
-      setMensajeNotif('¡Usuario actualizado con éxito!');
-    } else {
-      const nuevo: UsuarioSistema = {
-        id: Date.now(),
-        nombre: nuevoNombreUsr.trim(),
-        email: correoNormalizado,
-        password: nuevoPassUsr,
-        rol: nuevoRolUsr,
-        sucursalId: sucursalIdSeleccionada,
-        activo: true
-      };
-      setUsuariosSistema(prev => [...prev, nuevo]);
-      setMensajeNotif('¡Usuario registrado con éxito!');
-    }
+    try {
+      if (usuarioEditando) {
+        await llamarApiUsuarios('PATCH', {
+          id: usuarioEditando.id,
+          fullName: nuevoNombreUsr.trim(),
+          email: correoNormalizado,
+          password: nuevoPassUsr.trim() || undefined,
+          roleName: nuevoRolUsr,
+          branchId: sucursalIdSeleccionada,
+          active: usuarioEditando.activo
+        });
+        setMensajeNotif('¡Usuario actualizado en Supabase!');
+      } else {
+        await llamarApiUsuarios('POST', {
+          fullName: nuevoNombreUsr.trim(),
+          email: correoNormalizado,
+          password: nuevoPassUsr.trim(),
+          roleName: nuevoRolUsr,
+          branchId: sucursalIdSeleccionada
+        });
+        setMensajeNotif('¡Usuario creado en Supabase Auth y en el ERP!');
+      }
 
-    setModalUsuarioAbierto(false);
-    limpiarFormularioUsuario();
+      if (usuarioLogueado) await cargarCatalogosSeguridad(usuarioLogueado);
+      setModalUsuarioAbierto(false);
+      limpiarFormularioUsuario();
+      setModalNotifAbierto(true);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible guardar el usuario: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
+    }
+  };
+
+  const cambiarEstatusUsuario = async (usuario: UsuarioSistema) => {
+    try {
+      await llamarApiUsuarios('PATCH', {
+        id: usuario.id,
+        fullName: usuario.nombre,
+        email: usuario.email,
+        roleName: usuario.rol,
+        branchId: usuario.sucursalId,
+        active: !usuario.activo
+      });
+      setUsuariosSistema(prev => prev.map(u => u.id === usuario.id ? { ...u, activo: !u.activo } : u));
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible cambiar el estatus del usuario: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
+    }
+  };
+
+  const guardarPermisosRol = async () => {
+    if (!rolEditandoPermisos) return;
+    if (rolEditandoPermisos.nombreRol === 'Administrador') {
+      setMensajeNotif('El rol Administrador conserva acceso global a todos los módulos.');
+      setModalNotifAbierto(true);
+      return;
+    }
+    const { error } = await supabase
+      .from('roles')
+      .update({ allowed_modules: rolEditandoPermisos.modulosPermitidos })
+      .eq('name', rolEditandoPermisos.nombreRol);
+    if (error) {
+      setMensajeNotif(`No fue posible guardar los permisos: ${error.message}`);
+      setModalNotifAbierto(true);
+      return;
+    }
+    setRolesSistema(prev => prev.map(r => r.nombreRol === rolEditandoPermisos.nombreRol ? rolEditandoPermisos : r));
+    setModalPermisosAbierto(false);
+    setMensajeNotif(`Permisos de ${rolEditandoPermisos.nombreRol} guardados en la base de datos.`);
     setModalNotifAbierto(true);
   };
 
@@ -2593,7 +2786,7 @@ export default function DashboardPage() {
 
   const { subtotalBruto, descuentoTotal, subtotalNeto, iva, total } = calcularTotal();
 
-  // Mientras comprobamos localStorage evitamos el "parpadeo" de la pantalla de login.
+  // Mientras Supabase comprueba la sesión evitamos el "parpadeo" de la pantalla de login.
   if (!sesionCargada) {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4">
@@ -2616,43 +2809,7 @@ export default function DashboardPage() {
           </div>
 
           {!vistaRecuperacion ? (
-            <form onSubmit={(e) => {
-              e.preventDefault();
-              const usr = usuariosSistema.find(u => u.email.toLowerCase() === emailLogin.toLowerCase() && u.password === passwordLogin);
-              if (usr) {
-                if (!usr.activo) {
-                  alert('Este usuario se encuentra inactivo.');
-                  return;
-                }
-
-                if (usr.rol !== 'Administrador') {
-                  const sucursalUsr = sucursales.find(s => s.id === usr.sucursalId);
-                  if (!sucursalUsr || sucursalUsr.estatus !== 'Activa') {
-                    alert('Este usuario no tiene una sucursal activa asignada. Solicite al administrador que actualice su acceso.');
-                    return;
-                  }
-                  setSucursalActivaPOS(sucursalUsr.nombre);
-                  setSucursalIngreso(sucursalUsr.nombre);
-                  setAlmacenIngreso(sucursalUsr.almacenPrincipal);
-                  setGSuc(sucursalUsr.nombre);
-                  setAudTipo('Sucursal');
-                  setAudValor(sucursalUsr.nombre);
-                  setSucursalReporte(sucursalUsr.nombre);
-                }
-
-                guardarSesionLocal(usr);
-                setUsuarioLogueado(usr);
-                const rolRefLogin = rolesSistema.find(r => r.nombreRol === usr.rol);
-                const primerModulo = usr.rol === 'Administrador'
-                  ? 'inicio'
-                  : (rolRefLogin?.modulosPermitidos.includes('inicio')
-                      ? 'inicio'
-                      : rolRefLogin?.modulosPermitidos[0] || 'ventas');
-                setModuloActivo(primerModulo);
-              } else {
-                alert('Credenciales incorrectas. Verifique su correo y contraseña.');
-              }
-            }} className="space-y-4 text-xs">
+            <form onSubmit={iniciarSesionSupabase} className="space-y-4 text-xs">
               <div>
                 <label className="block text-slate-400 mb-1">Correo Electrónico:</label>
                 <input
@@ -2683,16 +2840,7 @@ export default function DashboardPage() {
               </div>
             </form>
           ) : (
-            <form onSubmit={(e) => {
-              e.preventDefault();
-              const usr = usuariosSistema.find(u => u.email.toLowerCase() === emailRecuperacion.toLowerCase());
-              if (usr) {
-                alert(`📧 Se ha enviado un enlace de recuperación a "${usr.email}". Su contraseña actual es: ${usr.password}`);
-                setVistaRecuperacion(false);
-              } else {
-                alert('El correo ingresado no está registrado en el sistema.');
-              }
-            }} className="space-y-4 text-xs">
+            <form onSubmit={enviarRecuperacionSupabase} className="space-y-4 text-xs">
               <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 text-slate-300">
                 Ingrese el correo electrónico asociado a su cuenta para recibir instrucciones de recuperación de contraseña.
               </div>
@@ -3148,8 +3296,8 @@ export default function DashboardPage() {
                         <input type="email" value={nuevoEmailUsr} onChange={(e) => setNuevoEmailUsr(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" />
                       </div>
                       <div>
-                        <label className="block text-slate-400 mb-1">Contraseña *</label>
-                        <input type="text" value={nuevoPassUsr} onChange={(e) => setNuevoPassUsr(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono" />
+                        <label className="block text-slate-400 mb-1">{usuarioEditando ? 'Nueva contraseña (opcional)' : 'Contraseña temporal *'}</label>
+                        <input type="password" value={nuevoPassUsr} onChange={(e) => setNuevoPassUsr(e.target.value)} required={!usuarioEditando} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono" />
                       </div>
                       <div>
                         <label className="block text-slate-400 mb-1">Rol Asignado *</label>
@@ -3246,12 +3394,7 @@ export default function DashboardPage() {
 
                     <div className="flex justify-end gap-2 pt-4 border-t border-slate-800">
                       <button type="button" onClick={() => setModalPermisosAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl text-xs cursor-pointer">Cancelar</button>
-                      <button type="button" onClick={() => {
-                        setRolesSistema(rolesSistema.map(r => r.nombreRol === rolEditandoPermisos.nombreRol ? rolEditandoPermisos : r));
-                        setModalPermisosAbierto(false);
-                        setMensajeNotif(`¡Permisos actualizados con éxito para el rol ${rolEditandoPermisos.nombreRol}!`);
-                        setModalNotifAbierto(true);
-                      }} className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-5 py-2 rounded-xl text-xs cursor-pointer">Guardar Permisos</button>
+                      <button type="button" onClick={guardarPermisosRol} className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-5 py-2 rounded-xl text-xs cursor-pointer">Guardar Permisos</button>
                     </div>
                   </div>
                 </div>
@@ -3291,9 +3434,7 @@ export default function DashboardPage() {
                                 )}
                               </td>
                               <td className="p-3 text-center">
-                                <button type="button" onClick={() => {
-                                  setUsuariosSistema(usuariosSistema.map(usr => usr.id === u.id ? { ...usr, activo: !usr.activo } : usr));
-                                }} className={`px-2.5 py-1 rounded-full font-bold text-[10px] cursor-pointer ${u.activo ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-red-950 text-red-400 border border-red-800'}`}>
+                                <button type="button" onClick={() => cambiarEstatusUsuario(u)} className={`px-2.5 py-1 rounded-full font-bold text-[10px] cursor-pointer ${u.activo ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-red-950 text-red-400 border border-red-800'}`}>
                                   {u.activo ? 'Activo' : 'Inactivo'}
                                 </button>
                               </td>
