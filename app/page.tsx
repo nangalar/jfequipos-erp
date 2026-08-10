@@ -186,14 +186,17 @@ interface CuentaPorPagar {
 }
 
 interface AuditoriaItem {
+  idDb?: number;
   productoId: number;
   codigo: string;
   nombreProducto: string;
+  almacen: string;
   existenciaTeorica: number;
   existenciaFisica: number;
   diferencia: number;
   tipoDiferencia: 'Exacto' | 'Faltante' | 'Sobrante' | 'Dañado';
   observaciones: string;
+  contado: boolean;
 }
 
 interface AuditoriaInventario {
@@ -201,6 +204,8 @@ interface AuditoriaInventario {
   folio: string;
   tipoAlcance: 'Sucursal' | 'Almacén' | 'Categoría' | 'Ubicación' | 'Completa' | 'Conteo Cíclico';
   valorAlcance: string;
+  sucursalId?: number;
+  sucursal?: string;
   responsable: string;
   fechaAuditoria: string;
   estadoBloqueo: boolean;
@@ -463,8 +468,8 @@ export default function DashboardPage() {
   const [gImporte, setGImporte] = useState('');
   const [gDoc, setGDoc] = useState('');
   const [gCentro, setGCentro] = useState('Operaciones');
-  const [gAut, setGAut] = useState('Gerencia de Administración');
-  const [gEstatus, setGEstatus] = useState<GastoOperativo['estatus']>('Autorizado');
+  const [gAut, setGAut] = useState('');
+  const [gEstatus, setGEstatus] = useState<GastoOperativo['estatus']>('Registrado');
   const [gObs, setGObs] = useState('');
 
   const [cuentasPorPagar, setCuentasPorPagar] = useState<CuentaPorPagar[]>([]);
@@ -491,6 +496,7 @@ export default function DashboardPage() {
   const [auditoriaSeleccionadaDetalle, setAuditoriaSeleccionadaDetalle] = useState<AuditoriaInventario | null>(null);
   const [codigoEscaneoAuditoria, setCodigoEscaneoAuditoria] = useState<string>('');
   const [audTipo, setAudTipo] = useState<AuditoriaInventario['tipoAlcance']>('Sucursal');
+  const [audSucursal, setAudSucursal] = useState('');
   const [audValor, setAudValor] = useState('');
   const [audResp, setAudResp] = useState('');
   const [audObs, setAudObs] = useState('');
@@ -584,7 +590,7 @@ export default function DashboardPage() {
     : gastos.filter((g: GastoOperativo) => g.sucursal === nombreSucursalAsignadaUsuario);
   const auditoriasVisiblesUsuario = usuarioEsAdministrador
     ? auditorias
-    : auditorias.filter((a: AuditoriaInventario) => a.tipoAlcance === 'Sucursal' && a.valorAlcance === nombreSucursalAsignadaUsuario);
+    : auditorias.filter((a: AuditoriaInventario) => a.sucursal === nombreSucursalAsignadaUsuario);
   const cotizacionesVisiblesUsuario = usuarioEsAdministrador
     ? cotizaciones
     : cotizaciones.filter((c: Cotizacion) => c.sucursal === nombreSucursalAsignadaUsuario);
@@ -1152,6 +1158,110 @@ export default function DashboardPage() {
     setCuentasPorPagar((cxpResp.data || []).map(mapearCxPDb));
   };
 
+  const mapearGastoDb = (row: any): GastoOperativo => {
+    const sucRel = relacionUnicaDb(row.branches);
+    return {
+      id: Number(row.id),
+      folio: String(row.folio || ''),
+      categoria: String(row.category || ''),
+      sucursal: String(sucRel?.name || ''),
+      responsable: String(row.responsible || ''),
+      proveedor: String(row.supplier_name || ''),
+      fecha: String(row.expense_date || ''),
+      formaPago: String(row.payment_method || ''),
+      importe: Number(row.amount || 0),
+      iva: Number(row.vat_amount || 0),
+      total: Number(row.total || 0),
+      documentoComprobatorio: String(row.supporting_document || ''),
+      centroCostos: String(row.cost_center || ''),
+      autorizacion: String(row.authorization_note || ''),
+      estatus: (['Registrado','En revisión','Autorizado','Pagado','Cancelado'].includes(String(row.status))
+        ? String(row.status)
+        : 'Registrado') as GastoOperativo['estatus'],
+      observaciones: String(row.notes || '')
+    };
+  };
+
+  const mapearAuditoriaDb = (row: any): AuditoriaInventario => {
+    const sucRel = relacionUnicaDb(row.branches);
+    const items: AuditoriaItem[] = Array.isArray(row.audit_items)
+      ? row.audit_items.map((it: any): AuditoriaItem => ({
+          idDb: Number(it.id),
+          productoId: Number(it.product_id),
+          codigo: String(it.sku || ''),
+          nombreProducto: String(it.product_name || ''),
+          almacen: String(it.warehouse || ''),
+          existenciaTeorica: Number(it.theoretical_qty || 0),
+          existenciaFisica: Number(it.physical_qty || 0),
+          diferencia: Number(it.difference || 0),
+          tipoDiferencia: (['Exacto','Faltante','Sobrante','Dañado'].includes(String(it.difference_type))
+            ? String(it.difference_type)
+            : 'Exacto') as AuditoriaItem['tipoDiferencia'],
+          observaciones: String(it.notes || ''),
+          contado: it.counted === true
+        }))
+      : [];
+
+    return {
+      id: Number(row.id),
+      folio: String(row.folio || ''),
+      tipoAlcance: String(row.scope_type || 'Sucursal') as AuditoriaInventario['tipoAlcance'],
+      valorAlcance: String(row.scope_value || ''),
+      sucursalId: row.branch_id == null ? undefined : Number(row.branch_id),
+      sucursal: String(sucRel?.name || ''),
+      responsable: String(row.responsible || ''),
+      fechaAuditoria: String(row.audit_date || ''),
+      estadoBloqueo: row.inventory_locked === true,
+      estatus: String(row.status || 'En Proceso') as AuditoriaInventario['estatus'],
+      observaciones: String(row.notes || ''),
+      items
+    };
+  };
+
+  const cargarGastosAuditorias = async () => {
+    const [gastosResp, auditoriasResp] = await Promise.all([
+      supabase
+        .from('expenses')
+        .select(`
+          id, folio, category, branch_id, responsible, supplier_name,
+          expense_date, payment_method, amount, vat_amount, total,
+          supporting_document, cost_center, authorization_note, status, notes,
+          branches(name)
+        `)
+        .order('expense_date', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(1000),
+      supabase
+        .from('audits')
+        .select(`
+          id, folio, scope_type, scope_value, branch_id, responsible,
+          audit_date, inventory_locked, status, notes, branches(name),
+          audit_items(
+            id, product_id, sku, product_name, warehouse,
+            theoretical_qty, physical_qty, difference, difference_type,
+            notes, counted, updated_at
+          )
+        `)
+        .order('created_at', { ascending: false })
+        .limit(500)
+    ]);
+
+    if (gastosResp.error) throw new Error(`Gastos: ${gastosResp.error.message}`);
+    if (auditoriasResp.error) throw new Error(`Auditorías: ${auditoriasResp.error.message}`);
+
+    const gastosMap = (gastosResp.data || []).map(mapearGastoDb);
+    const auditoriasMap = (auditoriasResp.data || []).map(mapearAuditoriaDb);
+    setGastos(gastosMap);
+    setAuditorias(auditoriasMap);
+
+    setAuditoriaSeleccionadaDetalle(prev => {
+      if (!prev) return null;
+      return auditoriasMap.find((a: AuditoriaInventario) => a.id === prev.id) || null;
+    });
+
+    return { gastosMap, auditoriasMap };
+  };
+
   const normalizarRolRelacion = (rel: any) => Array.isArray(rel) ? rel[0] : rel;
 
   const cargarCatalogosSeguridad = async (usr: UsuarioSistema) => {
@@ -1312,6 +1422,9 @@ export default function DashboardPage() {
     setProveedores([]);
     setCuentasPorCobrar([]);
     setCuentasPorPagar([]);
+    setGastos([]);
+    setAuditorias([]);
+    setAuditoriaSeleccionadaDetalle(null);
     setTicketGenerado(null);
     setVentaExitosa(false);
     setCarrito([]);
@@ -1326,14 +1439,15 @@ export default function DashboardPage() {
   // Refresca datos persistentes al entrar a módulos operativos.
   useEffect(() => {
     if (!usuarioLogueado) return;
-    if (!['productos', 'inventario', 'ventas', 'cotizaciones', 'clientes', 'proveedores', 'cxc', 'cxp', 'auditoria', 'historial', 'reportes', 'inicio'].includes(moduloActivo)) return;
+    if (!['productos', 'inventario', 'ventas', 'cotizaciones', 'clientes', 'proveedores', 'cxc', 'cxp', 'gastos', 'auditoria', 'historial', 'reportes', 'inicio'].includes(moduloActivo)) return;
 
     const refrescarPersistencia = async () => {
       await liberarCotizacionesVencidas();
       await Promise.all([
         cargarProductosInventario(),
         cargarVentasCotizaciones(),
-        cargarClientesProveedoresFinanzas()
+        cargarClientesProveedoresFinanzas(),
+        cargarGastosAuditorias()
       ]);
     };
 
@@ -1356,6 +1470,7 @@ export default function DashboardPage() {
       if (gSuc) setGSuc('');
       if (cxpSucursal) setCxpSucursal('');
       if (sucursalActivaPOS) setSucursalActivaPOS('');
+      if (audSucursal) setAudSucursal('');
       if (audValor) setAudValor('');
       if (sucursalReporte !== 'Todas') setSucursalReporte('Todas');
       return;
@@ -1376,19 +1491,18 @@ export default function DashboardPage() {
       setCarrito([]);
     }
 
+    if (!audSucursal || !disponibles.some(s => s.nombre === audSucursal)) {
+      setAudSucursal(primera.nombre);
+    }
+
     if (usuarioLogueado?.rol !== 'Administrador') {
-      if (audTipo !== 'Sucursal') setAudTipo('Sucursal');
-      if (audValor !== primera.nombre) setAudValor(primera.nombre);
       if (sucursalReporte !== primera.nombre) setSucursalReporte(primera.nombre);
     } else {
-      if (audTipo === 'Sucursal' && (!audValor || !disponibles.some(s => s.nombre === audValor))) {
-        setAudValor(primera.nombre);
-      }
       if (sucursalReporte !== 'Todas' && !sucursales.some(s => s.nombre === sucursalReporte)) {
         setSucursalReporte('Todas');
       }
     }
-  }, [sucursales, audTipo, usuarioLogueado?.id, usuarioLogueado?.rol, usuarioLogueado?.sucursalId]);
+  }, [sucursales, usuarioLogueado?.id, usuarioLogueado?.rol, usuarioLogueado?.sucursalId]);
 
   const formatearMoneda = (valor: number) => {
     return `$${valor.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MXN`;
@@ -1841,93 +1955,110 @@ export default function DashboardPage() {
     }
   };
 
-  const registrarAuditoria = (e: React.FormEvent) => {
+  const registrarAuditoria = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const tipoAuditoriaAplicado: AuditoriaInventario['tipoAlcance'] = usuarioEsAdministrador ? audTipo : 'Sucursal';
-    const valorAuditoriaAplicado = usuarioEsAdministrador ? audValor : nombreSucursalAsignadaUsuario;
+    const sucursalAplicada = usuarioEsAdministrador ? audSucursal : nombreSucursalAsignadaUsuario;
+    const sucObj = sucursales.find((s: Sucursal) => s.nombre === sucursalAplicada && s.estatus === 'Activa');
 
-    if (tipoAuditoriaAplicado === 'Sucursal' && !valorAuditoriaAplicado) {
+    if (!sucObj) {
       setMensajeNotif('Seleccione una sucursal activa antes de iniciar la auditoría.');
       setModalNotifAbierto(true);
       return;
     }
-    if (tipoAuditoriaAplicado === 'Sucursal' && !puedeOperarSucursal(valorAuditoriaAplicado)) {
+    if (!puedeOperarSucursal(sucObj.nombre)) {
       setMensajeNotif('No tiene permiso para auditar otra sucursal.');
       setModalNotifAbierto(true);
       return;
     }
 
-    const itemsAuditoria: AuditoriaItem[] = catalogoProductos.map(prod => {
-      const stockRef = obtenerStockSucursal(prod.id, valorAuditoriaAplicado);
-      return {
-        productoId: prod.id,
-        codigo: prod.codigo,
-        nombreProducto: prod.nombre,
-        existenciaTeorica: stockRef,
-        existenciaFisica: 0,
-        diferencia: 0 - stockRef,
-        tipoDiferencia: 'Faltante',
-        observaciones: 'Pendiente de conteo físico'
-      };
-    });
+    const requiereValor = ['Almacén', 'Categoría', 'Ubicación'].includes(audTipo);
+    if (requiereValor && !audValor.trim()) {
+      setMensajeNotif('Indique el almacén, categoría o ubicación que desea auditar.');
+      setModalNotifAbierto(true);
+      return;
+    }
 
-    const nuevaAud: AuditoriaInventario = {
-      id: Date.now(),
-      folio: `AUD-${Math.floor(1000 + Math.random() * 9000)}`,
-      tipoAlcance: tipoAuditoriaAplicado,
-      valorAlcance: valorAuditoriaAplicado,
-      responsable: audResp,
-      fechaAuditoria: new Date().toISOString().split('T')[0],
-      estadoBloqueo: true,
-      estatus: 'Pendiente Autorización',
-      observaciones: audObs || 'Conteo cíclico y bloqueo de almacén activo.',
-      items: itemsAuditoria
-    };
+    try {
+      const { data, error } = await supabase.rpc('audit_create', {
+        p_scope_type: audTipo,
+        p_scope_value: audValor.trim(),
+        p_branch_id: sucObj.id,
+        p_responsible: audResp.trim(),
+        p_notes: audObs.trim()
+      });
+      if (error) throw error;
 
-    setAuditorias(prev => [nuevaAud, ...prev]);
-    setModalAuditoriaAbierto(false);
-    setAudObs('');
-    setMensajeNotif(`¡Auditoría ${nuevaAud.folio} programada! El conteo físico inicia en 0 para cálculo de diferencias reales.`);
-    setModalNotifAbierto(true);
+      const { auditoriasMap } = await cargarGastosAuditorias();
+      const idCreado = Number((data as any)?.id || 0);
+      const creada = auditoriasMap.find((a: AuditoriaInventario) => a.id === idCreado);
+      if (creada) setAuditoriaSeleccionadaDetalle(creada);
+
+      setModalAuditoriaAbierto(false);
+      setAudValor('');
+      setAudObs('');
+      setMensajeNotif(`¡Auditoría ${(data as any)?.folio || ''} creada y guardada en Supabase! El inventario del alcance queda bloqueado hasta aplicar el ajuste o cancelar la auditoría.`);
+      setModalNotifAbierto(true);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible crear la auditoría: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
+    }
   };
 
+  const guardarConteoAuditoria = async (item: AuditoriaItem, cantidad: number, nota: string) => {
+    if (!item.idDb) throw new Error('El renglón de auditoría no tiene identificador de base de datos.');
+    const { data, error } = await supabase.rpc('audit_set_count', {
+      p_audit_item_id: item.idDb,
+      p_physical_qty: cantidad,
+      p_notes: nota
+    });
+    if (error) throw error;
+    return data;
+  };
 
-  const escanearProductoAuditoria = (e: React.FormEvent) => {
+  const escanearProductoAuditoria = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!auditoriaSeleccionadaDetalle || !codigoEscaneoAuditoria.trim()) return;
 
     const codigoBuscado = codigoEscaneoAuditoria.trim().toLowerCase();
-    const itemsActualizados = auditoriaSeleccionadaDetalle.items.map(it => {
-      if (it.codigo.toLowerCase() === codigoBuscado || it.nombreProducto.toLowerCase().includes(codigoBuscado)) {
-        const nuevaFisica = it.existenciaFisica + 1;
-        const dif = nuevaFisica - it.existenciaTeorica;
-        let tipo: AuditoriaItem['tipoDiferencia'] = 'Exacto';
-        if (dif < 0) tipo = 'Faltante';
-        if (dif > 0) tipo = 'Sobrante';
-        return {
-          ...it,
-          existenciaFisica: nuevaFisica,
-          diferencia: dif,
-          tipoDiferencia: tipo,
-          observaciones: 'Escaneado vía Bluetooth / Teléfono / Cámara'
-        };
-      }
-      return it;
-    });
+    const coincidencias = auditoriaSeleccionadaDetalle.items.filter(it =>
+      it.codigo.toLowerCase() === codigoBuscado || it.nombreProducto.toLowerCase().includes(codigoBuscado)
+    );
 
-    const audModificada = { ...auditoriaSeleccionadaDetalle, items: itemsActualizados };
-    setAuditoriaSeleccionadaDetalle(audModificada);
-    setAuditorias(prev => prev.map(a => a.id === audModificada.id ? audModificada : a));
-    setCodigoEscaneoAuditoria('');
+    if (coincidencias.length === 0) {
+      setMensajeNotif('El código no pertenece al alcance de esta auditoría.');
+      setModalNotifAbierto(true);
+      return;
+    }
+
+    if (coincidencias.length > 1) {
+      setMensajeNotif('Ese producto aparece en más de un almacén dentro de la auditoría. Captura la existencia manualmente en el renglón del almacén correcto.');
+      setModalNotifAbierto(true);
+      return;
+    }
+
+    const item = coincidencias[0];
+    const nuevaFisica = item.existenciaFisica + 1;
+
+    try {
+      await guardarConteoAuditoria(item, nuevaFisica, 'Escaneado vía Bluetooth / Teléfono / Cámara');
+      const { auditoriasMap } = await cargarGastosAuditorias();
+      const actualizada = auditoriasMap.find((a: AuditoriaInventario) => a.id === auditoriaSeleccionadaDetalle.id);
+      if (actualizada) setAuditoriaSeleccionadaDetalle(actualizada);
+      setCodigoEscaneoAuditoria('');
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible guardar el conteo: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
+    }
   };
 
-  const actualizarConteoManual = (productoId: number, nuevaFisicaStr: string) => {
+  const actualizarConteoManual = (auditItemId: number, nuevaFisicaStr: string) => {
     if (!auditoriaSeleccionadaDetalle) return;
-    const fisicaNum = Number(nuevaFisicaStr) || 0;
+    const fisicaNum = Math.max(0, Number(nuevaFisicaStr) || 0);
 
     const itemsActualizados = auditoriaSeleccionadaDetalle.items.map(it => {
-      if (it.productoId === productoId) {
+      const clave = it.idDb || it.productoId;
+      if (clave === auditItemId) {
         const dif = fisicaNum - it.existenciaTeorica;
         let tipo: AuditoriaItem['tipoDiferencia'] = 'Exacto';
         if (dif < 0) tipo = 'Faltante';
@@ -1937,7 +2068,7 @@ export default function DashboardPage() {
           existenciaFisica: fisicaNum,
           diferencia: dif,
           tipoDiferencia: tipo,
-          observaciones: 'Conteo físico manual registrado'
+          observaciones: 'Conteo físico manual pendiente de guardar'
         };
       }
       return it;
@@ -1948,89 +2079,136 @@ export default function DashboardPage() {
     setAuditorias(prev => prev.map(a => a.id === audModificada.id ? audModificada : a));
   };
 
-  const autorizarAjusteAuditoria = (audId: number) => {
-    const audRef = auditorias.find(a => a.id === audId);
-    if (!audRef) return;
-    if (audRef.tipoAlcance === 'Sucursal' && !puedeOperarSucursal(audRef.valorAlcance)) {
-      setMensajeNotif('No tiene permiso para aplicar ajustes de otra sucursal.');
+  const guardarConteoManual = async (auditItemId: number) => {
+    if (!auditoriaSeleccionadaDetalle) return;
+    const item = auditoriaSeleccionadaDetalle.items.find(it => (it.idDb || it.productoId) === auditItemId);
+    if (!item) return;
+
+    try {
+      await guardarConteoAuditoria(item, item.existenciaFisica, 'Conteo físico manual registrado');
+      const { auditoriasMap } = await cargarGastosAuditorias();
+      const actualizada = auditoriasMap.find((a: AuditoriaInventario) => a.id === auditoriaSeleccionadaDetalle.id);
+      if (actualizada) setAuditoriaSeleccionadaDetalle(actualizada);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible guardar el conteo manual: ${error?.message || String(error)}`);
       setModalNotifAbierto(true);
-      return;
     }
-
-    setInventarioSucursales(prevInv => {
-      return prevInv.map(inv => {
-        const itemAud = audRef.items.find(it => it.productoId === inv.productoId && inv.sucursal === audRef.valorAlcance);
-        if (itemAud) {
-          const existAnt = inv.stockActual;
-          const existPost = itemAud.existenciaFisica;
-          if (existAnt !== existPost) {
-            const prodObj = catalogoProductos.find(p => p.id === inv.productoId);
-            registrarMovimientoKardex(
-              prodObj ? prodObj.nombre : 'Producto',
-              inv.sucursal,
-              inv.almacen,
-              Math.abs(existPost - existAnt),
-              existPost > existAnt ? 'Entrada' : 'Salida',
-              existAnt,
-              existPost,
-              prodObj ? prodObj.costoPromedio : 0,
-              `Ajuste por Auditoría ${audRef.folio}`,
-              'Autorizado y aplicado por Dirección / Administración.'
-            );
-          }
-          return { ...inv, stockActual: itemAud.existenciaFisica };
-        }
-        return inv;
-      });
-    });
-
-    setAuditorias(prev => prev.map(a => a.id === audId ? { ...a, estatus: 'Ajuste Aplicado', estadoBloqueo: false } : a));
-    setMensajeNotif(`¡Ajustes de inventario autorizados por Gerencia y aplicados para la auditoría ${audRef.folio}! Almacén desbloqueado y registrado en Kardex.`);
-    setModalNotifAbierto(true);
   };
 
-  const registrarGastoOperativo = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!gImporte) return;
-    if (!gSuc) {
-      setMensajeNotif('Seleccione una sucursal activa para registrar el gasto.');
+  const autorizarAjusteAuditoria = async (audId: number) => {
+    if (!usuarioEsAdministrador) {
+      setMensajeNotif('Solo el Administrador puede autorizar y aplicar diferencias de auditoría.');
       setModalNotifAbierto(true);
       return;
     }
-    if (!puedeOperarSucursal(gSuc)) {
-      setMensajeNotif('No tiene permiso para registrar gastos en otra sucursal.');
+
+    const audRef = auditorias.find(a => a.id === audId);
+    if (!audRef) return;
+
+    const pendientes = audRef.items.filter(it => !it.contado).length;
+    if (pendientes > 0) {
+      setMensajeNotif(`Faltan ${pendientes} renglones por contar. La auditoría no puede ajustarse todavía.`);
+      setModalNotifAbierto(true);
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase.rpc('audit_apply_adjustments', { p_audit_id: audId });
+      if (error) throw error;
+
+      await Promise.all([cargarProductosInventario(), cargarGastosAuditorias()]);
+      setAuditoriaSeleccionadaDetalle(null);
+      setMensajeNotif(`¡Auditoría ${audRef.folio} autorizada! Se aplicaron ${(data as any)?.movements ?? 0} ajustes y quedaron registrados permanentemente en Kardex.`);
+      setModalNotifAbierto(true);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible aplicar los ajustes: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
+    }
+  };
+
+  const cancelarAuditoria = async (audId: number) => {
+    if (!usuarioEsAdministrador) return;
+    const audRef = auditorias.find(a => a.id === audId);
+    if (!audRef) return;
+    if (!window.confirm(`¿Cancelar la auditoría ${audRef.folio}? El inventario se desbloqueará sin aplicar diferencias.`)) return;
+
+    try {
+      const { error } = await supabase.rpc('audit_cancel', {
+        p_audit_id: audId,
+        p_reason: 'Cancelada desde el ERP por Administrador'
+      });
+      if (error) throw error;
+      await cargarGastosAuditorias();
+      if (auditoriaSeleccionadaDetalle?.id === audId) setAuditoriaSeleccionadaDetalle(null);
+      setMensajeNotif(`Auditoría ${audRef.folio} cancelada. Inventario desbloqueado sin aplicar ajustes.`);
+      setModalNotifAbierto(true);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible cancelar la auditoría: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
+    }
+  };
+
+  const registrarGastoOperativo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!gImporte) return;
+
+    const sucursalAplicada = usuarioEsAdministrador ? gSuc : nombreSucursalAsignadaUsuario;
+    const sucObj = sucursales.find((s: Sucursal) => s.nombre === sucursalAplicada && s.estatus === 'Activa');
+    if (!sucObj) {
+      setMensajeNotif('Seleccione una sucursal activa para registrar el gasto.');
       setModalNotifAbierto(true);
       return;
     }
 
     const importeNum = Number(gImporte) || 0;
-    const ivaCalc = importeNum * 0.16;
-    const totalCalc = importeNum + ivaCalc;
+    if (importeNum <= 0) return;
 
-    const nuevoGasto: GastoOperativo = {
-      id: Date.now(),
-      folio: `GASTO-${Math.floor(1000 + Math.random() * 9000)}`,
-      categoria: gCat,
-      sucursal: gSuc,
-      responsable: gResp,
-      proveedor: gProv,
-      fecha: gFecha,
-      formaPago: gFormaPago,
-      importe: importeNum,
-      iva: ivaCalc,
-      total: totalCalc,
-      documentoComprobatorio: gDoc,
-      centroCostos: gCentro,
-      autorizacion: gAut,
-      estatus: gEstatus,
-      observaciones: gObs
-    };
+    try {
+      const { data, error } = await supabase.rpc('expense_create', {
+        p_category: gCat.trim(),
+        p_branch_id: sucObj.id,
+        p_responsible: gResp.trim(),
+        p_supplier_name: gProv.trim(),
+        p_expense_date: gFecha,
+        p_payment_method: gFormaPago,
+        p_amount: importeNum,
+        p_vat_percent: 16,
+        p_supporting_document: gDoc.trim(),
+        p_cost_center: gCentro.trim(),
+        p_authorization_note: gAut.trim(),
+        p_status: usuarioEsAdministrador ? gEstatus : 'Registrado',
+        p_notes: gObs.trim()
+      });
+      if (error) throw error;
 
-    setGastos(prev => [nuevoGasto, ...prev]);
-    setModalGastoAbierto(false);
-    setGImporte('');
-    setMensajeNotif('¡Gasto operativo registrado con éxito!');
-    setModalNotifAbierto(true);
+      await cargarGastosAuditorias();
+      setModalGastoAbierto(false);
+      setGImporte('');
+      setGDoc('');
+      setGObs('');
+      setMensajeNotif(`¡Gasto ${(data as any)?.folio || ''} guardado permanentemente en Supabase!`);
+      setModalNotifAbierto(true);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible registrar el gasto: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
+    }
+  };
+
+  const cambiarEstatusGasto = async (gasto: GastoOperativo, estatus: GastoOperativo['estatus']) => {
+    if (!usuarioEsAdministrador) return;
+    try {
+      const { error } = await supabase.rpc('expense_set_status', {
+        p_expense_id: gasto.id,
+        p_status: estatus
+      });
+      if (error) throw error;
+      await cargarGastosAuditorias();
+      setMensajeNotif(`Gasto ${gasto.folio}: estatus actualizado a ${estatus}.`);
+      setModalNotifAbierto(true);
+    } catch (error: any) {
+      setMensajeNotif(`No fue posible cambiar el estatus: ${error?.message || String(error)}`);
+      setModalNotifAbierto(true);
+    }
   };
 
   const registrarFacturaCxP = async (e: React.FormEvent) => {
@@ -5681,7 +5859,7 @@ export default function DashboardPage() {
                       <div><label className="block text-slate-400 mb-1">Comprobante / referencia</label><input type="text" value={gDoc} onChange={(e) => setGDoc(e.target.value)} placeholder="Factura, ticket o archivo" className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
                       <div><label className="block text-slate-400 mb-1">Centro de costos</label><input type="text" value={gCentro} onChange={(e) => setGCentro(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
                       <div><label className="block text-slate-400 mb-1">Autorización</label><input type="text" value={gAut} onChange={(e) => setGAut(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
-                      <div><label className="block text-slate-400 mb-1">Estatus</label><select value={gEstatus} onChange={(e) => setGEstatus(e.target.value as GastoOperativo['estatus'])} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"><option value="Registrado">Registrado</option><option value="En revisión">En revisión</option><option value="Autorizado">Autorizado</option><option value="Pagado">Pagado</option><option value="Cancelado">Cancelado</option></select></div>
+                      <div><label className="block text-slate-400 mb-1">Estatus</label>{usuarioEsAdministrador ? <select value={gEstatus} onChange={(e) => setGEstatus(e.target.value as GastoOperativo['estatus'])} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"><option value="Registrado">Registrado</option><option value="En revisión">En revisión</option><option value="Autorizado">Autorizado</option><option value="Pagado">Pagado</option><option value="Cancelado">Cancelado</option></select> : <div className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-amber-400 font-bold">Registrado</div>}</div>
                       <div className="md:col-span-2"><label className="block text-slate-400 mb-1">Observaciones</label><textarea value={gObs} onChange={(e) => setGObs(e.target.value)} rows={2} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
                       <div className="md:col-span-3 bg-slate-950 border border-slate-800 rounded-xl p-3 text-slate-400">IVA calculado automáticamente al 16%. Total estimado: <strong className="text-emerald-400">{formatearMoneda((Number(gImporte) || 0) * 1.16)}</strong></div>
                       <div className="md:col-span-3 flex justify-end gap-3"><button type="button" onClick={() => setModalGastoAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer">Cancelar</button><button type="submit" className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-5 py-2 rounded-xl cursor-pointer">Guardar Gasto</button></div>
@@ -5691,8 +5869,8 @@ export default function DashboardPage() {
               )}
 
               <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
-                {gastos.length === 0 ? <div className="p-12 text-center"><p className="text-slate-400 font-semibold">No hay gastos operativos registrados.</p><p className="text-slate-500 text-xs mt-2">Usa “Registrar Gasto” para capturar el primero.</p></div> : (
-                  <div className="overflow-x-auto"><table className="w-full text-left border-collapse text-xs"><thead><tr className="bg-slate-950/60 text-slate-400 uppercase border-b border-slate-800"><th className="p-3">Folio</th><th className="p-3">Fecha</th><th className="p-3">Categoría</th><th className="p-3">Sucursal</th><th className="p-3">Responsable</th><th className="p-3">Importe</th><th className="p-3">IVA</th><th className="p-3">Total</th><th className="p-3">Estatus</th></tr></thead><tbody className="divide-y divide-slate-800/60">{gastosVisiblesUsuario.map(g => <tr key={g.id} className="hover:bg-slate-800/40"><td className="p-3 font-mono text-blue-400 font-bold">{g.folio}</td><td className="p-3 text-slate-300">{g.fecha}</td><td className="p-3 text-white font-semibold">{g.categoria}</td><td className="p-3 text-slate-300">{g.sucursal}</td><td className="p-3 text-slate-300">{g.responsable}</td><td className="p-3 text-slate-300">{formatearMoneda(g.importe)}</td><td className="p-3 text-slate-300">{formatearMoneda(g.iva)}</td><td className="p-3 text-emerald-400 font-bold">{formatearMoneda(g.total)}</td><td className="p-3 text-amber-400 font-bold">{g.estatus}</td></tr>)}</tbody></table></div>
+                {gastosVisiblesUsuario.length === 0 ? <div className="p-12 text-center"><p className="text-slate-400 font-semibold">No hay gastos operativos registrados.</p><p className="text-slate-500 text-xs mt-2">Usa “Registrar Gasto” para capturar el primero.</p></div> : (
+                  <div className="overflow-x-auto"><table className="w-full text-left border-collapse text-xs"><thead><tr className="bg-slate-950/60 text-slate-400 uppercase border-b border-slate-800"><th className="p-3">Folio</th><th className="p-3">Fecha</th><th className="p-3">Categoría</th><th className="p-3">Sucursal</th><th className="p-3">Responsable</th><th className="p-3">Importe</th><th className="p-3">IVA</th><th className="p-3">Total</th><th className="p-3">Estatus</th>{usuarioEsAdministrador && <th className="p-3 text-center">Acciones</th>}</tr></thead><tbody className="divide-y divide-slate-800/60">{gastosVisiblesUsuario.map(g => <tr key={g.id} className="hover:bg-slate-800/40"><td className="p-3 font-mono text-blue-400 font-bold">{g.folio}</td><td className="p-3 text-slate-300">{g.fecha}</td><td className="p-3 text-white font-semibold">{g.categoria}</td><td className="p-3 text-slate-300">{g.sucursal}</td><td className="p-3 text-slate-300">{g.responsable}</td><td className="p-3 text-slate-300">{formatearMoneda(g.importe)}</td><td className="p-3 text-slate-300">{formatearMoneda(g.iva)}</td><td className="p-3 text-emerald-400 font-bold">{formatearMoneda(g.total)}</td><td className="p-3 text-amber-400 font-bold">{g.estatus}</td>{usuarioEsAdministrador && <td className="p-3 text-center"><select value={g.estatus} onChange={(e) => cambiarEstatusGasto(g, e.target.value as GastoOperativo['estatus'])} className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-white text-xs"><option value="Registrado">Registrado</option><option value="En revisión">En revisión</option><option value="Autorizado">Autorizado</option><option value="Pagado">Pagado</option><option value="Cancelado">Cancelado</option></select></td>}</tr>)}</tbody></table></div>
                 )}
               </div>
             </div>
@@ -5720,32 +5898,31 @@ export default function DashboardPage() {
                     {catalogoProductos.length === 0 && <div className="bg-amber-950/40 border border-amber-800 text-amber-300 rounded-xl p-3 text-xs">Primero registra productos y existencias. La auditoría necesita un catálogo para generar el conteo.</div>}
                     <form onSubmit={registrarAuditoria} className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                       <div>
-                        <label className="block text-slate-400 mb-1">Tipo de alcance</label>
+                        <label className="block text-slate-400 mb-1">Sucursal *</label>
                         {usuarioEsAdministrador ? (
-                          <select value={audTipo} onChange={(e) => setAudTipo(e.target.value as AuditoriaInventario['tipoAlcance'])} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
-                            <option value="Sucursal">Sucursal</option><option value="Almacén">Almacén</option><option value="Categoría">Categoría</option><option value="Ubicación">Ubicación</option><option value="Completa">Completa</option><option value="Conteo Cíclico">Conteo Cíclico</option>
+                          <select value={audSucursal} onChange={(e) => setAudSucursal(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
+                            <option value="">-- Seleccione sucursal --</option>
+                            {sucursalesPermitidasUsuario.map((s: Sucursal) => <option key={s.id} value={s.nombre}>{s.nombre}</option>)}
                           </select>
-                        ) : (
-                          <div className="w-full bg-slate-950 border border-emerald-800 rounded-xl px-3 py-2 text-emerald-400 font-bold">Sucursal asignada</div>
-                        )}
-                      </div>
-                      <div>
-                        <label className="block text-slate-400 mb-1">Sucursal / valor del alcance *</label>
-                        {usuarioEsAdministrador ? (
-                          audTipo === 'Sucursal' ? (
-                            <select value={audValor} onChange={(e) => setAudValor(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
-                              <option value="">-- Seleccione sucursal --</option>
-                              {sucursalesPermitidasUsuario.map((s: Sucursal) => <option key={s.id} value={s.nombre}>{s.nombre}</option>)}
-                            </select>
-                          ) : (
-                            <input type="text" value={audValor} onChange={(e) => setAudValor(e.target.value)} required placeholder="Indique almacén, categoría o ubicación" className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" />
-                          )
                         ) : (
                           <div className="w-full bg-slate-950 border border-emerald-800 rounded-xl px-3 py-2 text-emerald-400 font-bold">{nombreSucursalAsignadaUsuario || 'Sin sucursal asignada'}</div>
                         )}
                       </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Tipo de alcance</label>
+                        <select value={audTipo} onChange={(e) => { setAudTipo(e.target.value as AuditoriaInventario['tipoAlcance']); setAudValor(''); }} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
+                          <option value="Sucursal">Sucursal</option><option value="Almacén">Almacén</option><option value="Categoría">Categoría</option><option value="Ubicación">Ubicación</option><option value="Completa">Completa</option><option value="Conteo Cíclico">Conteo Cíclico</option>
+                        </select>
+                      </div>
+                      {['Almacén','Categoría','Ubicación','Conteo Cíclico'].includes(audTipo) && (
+                        <div className="md:col-span-2">
+                          <label className="block text-slate-400 mb-1">Valor del alcance {['Almacén','Categoría','Ubicación'].includes(audTipo) ? '*' : '(opcional)'}</label>
+                          <input type="text" value={audValor} onChange={(e) => setAudValor(e.target.value)} required={['Almacén','Categoría','Ubicación'].includes(audTipo)} placeholder={audTipo === 'Categoría' ? 'Ej. Cardio' : audTipo === 'Almacén' ? 'Ej. Almacén Principal' : 'Indique el alcance'} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" />
+                        </div>
+                      )}
                       <div><label className="block text-slate-400 mb-1">Responsable *</label><input type="text" value={audResp} onChange={(e) => setAudResp(e.target.value)} required className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
                       <div><label className="block text-slate-400 mb-1">Observaciones</label><input type="text" value={audObs} onChange={(e) => setAudObs(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white" /></div>
+                      <div className="md:col-span-2 bg-amber-950/30 border border-amber-800 rounded-xl p-3 text-amber-300">Al crear la auditoría, el inventario del alcance se bloquea para ventas, cotizaciones y movimientos hasta aplicar el ajuste o cancelar.</div>
                       <div className="md:col-span-2 flex justify-end gap-3"><button type="button" onClick={() => setModalAuditoriaAbierto(false)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl cursor-pointer">Cancelar</button><button type="submit" disabled={catalogoProductos.length === 0} className={`font-bold px-5 py-2 rounded-xl ${catalogoProductos.length === 0 ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-500 text-white cursor-pointer'}`}>Crear Auditoría</button></div>
                     </form>
                   </div>
@@ -5753,8 +5930,8 @@ export default function DashboardPage() {
               )}
 
               <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
-                {auditorias.length === 0 ? <div className="p-12 text-center"><p className="text-slate-400 font-semibold">No hay auditorías registradas.</p><p className="text-slate-500 text-xs mt-2">Cuando tengas productos, programa aquí el primer conteo físico.</p></div> : (
-                  <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr className="bg-slate-950/60 text-slate-400 uppercase border-b border-slate-800"><th className="p-3">Folio</th><th className="p-3">Fecha</th><th className="p-3">Alcance</th><th className="p-3">Responsable</th><th className="p-3">Productos</th><th className="p-3">Estatus</th><th className="p-3 text-center">Acciones</th></tr></thead><tbody className="divide-y divide-slate-800/60">{auditoriasVisiblesUsuario.map(aud => <tr key={aud.id} className="hover:bg-slate-800/40"><td className="p-3 font-mono text-blue-400 font-bold">{aud.folio}</td><td className="p-3 text-slate-300">{aud.fechaAuditoria}</td><td className="p-3 text-white">{aud.tipoAlcance}: {aud.valorAlcance}</td><td className="p-3 text-slate-300">{aud.responsable}</td><td className="p-3 text-purple-400 font-bold">{aud.items.length}</td><td className="p-3 text-amber-400 font-bold">{aud.estatus}</td><td className="p-3 text-center"><div className="flex flex-wrap justify-center gap-1.5"><button type="button" onClick={() => setAuditoriaSeleccionadaDetalle(aud)} className="bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1 rounded font-bold cursor-pointer">🔎 Abrir Conteo</button>{aud.estatus !== 'Ajuste Aplicado' && <button type="button" onClick={() => autorizarAjusteAuditoria(aud.id)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded font-bold cursor-pointer">✓ Aplicar Ajuste</button>}</div></td></tr>)}</tbody></table></div>
+                {auditoriasVisiblesUsuario.length === 0 ? <div className="p-12 text-center"><p className="text-slate-400 font-semibold">No hay auditorías registradas.</p><p className="text-slate-500 text-xs mt-2">Cuando tengas productos y existencias, programa aquí el primer conteo físico.</p></div> : (
+                  <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr className="bg-slate-950/60 text-slate-400 uppercase border-b border-slate-800"><th className="p-3">Folio</th><th className="p-3">Fecha</th><th className="p-3">Sucursal</th><th className="p-3">Alcance</th><th className="p-3">Responsable</th><th className="p-3">Conteo</th><th className="p-3">Estatus</th><th className="p-3 text-center">Acciones</th></tr></thead><tbody className="divide-y divide-slate-800/60">{auditoriasVisiblesUsuario.map(aud => <tr key={aud.id} className="hover:bg-slate-800/40"><td className="p-3 font-mono text-blue-400 font-bold">{aud.folio}</td><td className="p-3 text-slate-300">{aud.fechaAuditoria}</td><td className="p-3 text-slate-300">{aud.sucursal || '—'}</td><td className="p-3 text-white">{aud.tipoAlcance}: {aud.valorAlcance}</td><td className="p-3 text-slate-300">{aud.responsable}</td><td className="p-3 text-purple-400 font-bold">{aud.items.filter(it => it.contado).length}/{aud.items.length}</td><td className="p-3"><span className={`px-2 py-1 rounded font-bold ${aud.estatus === 'Ajuste Aplicado' ? 'bg-emerald-950 text-emerald-400' : aud.estatus === 'Cancelada' ? 'bg-red-950 text-red-400' : 'bg-amber-950 text-amber-400'}`}>{aud.estatus}{aud.estadoBloqueo ? ' 🔒' : ''}</span></td><td className="p-3 text-center"><div className="flex flex-wrap justify-center gap-1.5"><button type="button" onClick={() => setAuditoriaSeleccionadaDetalle(aud)} className="bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1 rounded font-bold cursor-pointer">🔎 Abrir Conteo</button>{usuarioEsAdministrador && aud.estatus === 'Pendiente Autorización' && <button type="button" onClick={() => autorizarAjusteAuditoria(aud.id)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded font-bold cursor-pointer">✓ Aplicar Ajuste</button>}{usuarioEsAdministrador && (aud.estatus === 'En Proceso' || aud.estatus === 'Pendiente Autorización') && <button type="button" onClick={() => cancelarAuditoria(aud.id)} className="bg-red-700 hover:bg-red-600 text-white px-2.5 py-1 rounded font-bold cursor-pointer">✕ Cancelar</button>}</div></td></tr>)}</tbody></table></div>
                 )}
               </div>
 
@@ -5763,12 +5940,12 @@ export default function DashboardPage() {
                   <div className="flex flex-col md:flex-row justify-between gap-3 md:items-center"><div><h4 className="text-white font-bold">Conteo físico · {auditoriaSeleccionadaDetalle.folio}</h4><p className="text-xs text-slate-400">Escanea el SKU/código o captura manualmente la existencia física.</p></div><button type="button" onClick={() => { setAuditoriaSeleccionadaDetalle(null); setCamaraAuditoriaActiva(false); }} className="bg-slate-800 text-slate-300 px-3 py-1.5 rounded-xl text-xs cursor-pointer">Cerrar detalle</button></div>
 
                   <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3">
-                    <form onSubmit={escanearProductoAuditoria} className="flex gap-2"><input type="text" value={codigoEscaneoAuditoria} onChange={(e) => setCodigoEscaneoAuditoria(e.target.value)} placeholder="Escanear o escribir SKU / código" className="flex-1 bg-slate-950 border border-blue-700 rounded-xl px-3 py-2 text-white text-xs font-mono" /><button type="submit" className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer">+ Contar 1</button></form>
+                    <form onSubmit={escanearProductoAuditoria} className="flex gap-2"><input type="text" disabled={auditoriaSeleccionadaDetalle.estatus === 'Ajuste Aplicado' || auditoriaSeleccionadaDetalle.estatus === 'Cancelada'} value={codigoEscaneoAuditoria} onChange={(e) => setCodigoEscaneoAuditoria(e.target.value)} placeholder="Escanear o escribir SKU / código" className="flex-1 bg-slate-950 border border-blue-700 rounded-xl px-3 py-2 text-white text-xs font-mono disabled:opacity-50" /><button type="submit" disabled={auditoriaSeleccionadaDetalle.estatus === 'Ajuste Aplicado' || auditoriaSeleccionadaDetalle.estatus === 'Cancelada'} className="bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer">+ Contar 1</button></form>
                     <button type="button" onClick={() => setCamaraAuditoriaActiva(!camaraAuditoriaActiva)} className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer">📷 {camaraAuditoriaActiva ? 'Apagar Cámara' : 'Abrir Cámara'}</button>
                   </div>
                   {camaraAuditoriaActiva && <div className="bg-purple-950/30 border border-purple-800 rounded-xl p-3 flex flex-col items-center gap-2"><video ref={videoAuditoriaRef} autoPlay playsInline className="w-full max-w-lg h-52 bg-black rounded-xl object-cover" /><p className="text-[10px] text-purple-300">El visor está activo. El código puede capturarse con lector Bluetooth o escribirse en el campo de escaneo.</p></div>}
 
-                  <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr className="bg-slate-950/60 text-slate-400 uppercase"><th className="p-3">Código</th><th className="p-3">Producto</th><th className="p-3">Teórica</th><th className="p-3">Física</th><th className="p-3">Diferencia</th><th className="p-3">Resultado</th></tr></thead><tbody className="divide-y divide-slate-800/60">{auditoriaSeleccionadaDetalle.items.map(it => <tr key={it.productoId}><td className="p-3 font-mono text-blue-400">{it.codigo}</td><td className="p-3 text-white">{it.nombreProducto}</td><td className="p-3 text-slate-300">{it.existenciaTeorica}</td><td className="p-3"><input type="number" min="0" value={it.existenciaFisica} onChange={(e) => actualizarConteoManual(it.productoId, e.target.value)} className="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-white font-mono" /></td><td className={`p-3 font-bold ${it.diferencia === 0 ? 'text-emerald-400' : it.diferencia < 0 ? 'text-red-400' : 'text-amber-400'}`}>{it.diferencia > 0 ? '+' : ''}{it.diferencia}</td><td className="p-3 text-slate-300">{it.tipoDiferencia}</td></tr>)}</tbody></table></div>
+                  <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr className="bg-slate-950/60 text-slate-400 uppercase"><th className="p-3">Código</th><th className="p-3">Producto</th><th className="p-3">Almacén</th><th className="p-3">Teórica</th><th className="p-3">Física</th><th className="p-3">Diferencia</th><th className="p-3">Resultado</th><th className="p-3">Guardado</th></tr></thead><tbody className="divide-y divide-slate-800/60">{auditoriaSeleccionadaDetalle.items.map(it => { const claveItem = it.idDb || it.productoId; const cerrado = auditoriaSeleccionadaDetalle.estatus === 'Ajuste Aplicado' || auditoriaSeleccionadaDetalle.estatus === 'Cancelada'; return <tr key={`${it.productoId}-${it.almacen}-${claveItem}`}><td className="p-3 font-mono text-blue-400">{it.codigo}</td><td className="p-3 text-white">{it.nombreProducto}</td><td className="p-3 text-slate-300">{it.almacen || '—'}</td><td className="p-3 text-slate-300">{it.existenciaTeorica}</td><td className="p-3"><input type="number" min="0" disabled={cerrado} value={it.existenciaFisica} onChange={(e) => actualizarConteoManual(claveItem, e.target.value)} onBlur={() => guardarConteoManual(claveItem)} className="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-white font-mono disabled:opacity-50" /></td><td className={`p-3 font-bold ${it.diferencia === 0 ? 'text-emerald-400' : it.diferencia < 0 ? 'text-red-400' : 'text-amber-400'}`}>{it.diferencia > 0 ? '+' : ''}{it.diferencia}</td><td className="p-3 text-slate-300">{it.tipoDiferencia}</td><td className={`p-3 font-bold ${it.contado ? 'text-emerald-400' : 'text-amber-400'}`}>{it.contado ? '✓ Sí' : 'Pendiente'}</td></tr>; })}</tbody></table></div>
                 </div>
               )}
             </div>
