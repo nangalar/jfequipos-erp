@@ -1346,12 +1346,42 @@ export default function DashboardPage() {
 
   useEffect(() => {
     let cancelado = false;
+    let recuperacionDetectada = false;
+
+    // Si Supabase devuelve el enlace de recuperación a la raíz por cualquier motivo,
+    // conservamos query/hash y lo enviamos a la pantalla obligatoria de contraseña.
+    const esRecuperacionEnUrl =
+      typeof window !== 'undefined' &&
+      (window.location.hash.includes('type=recovery') ||
+        window.location.search.includes('type=recovery'));
+
+    if (esRecuperacionEnUrl) {
+      recuperacionDetectada = true;
+      const destino = `/auth/set-password${window.location.search}${window.location.hash}`;
+      window.location.replace(destino);
+      return;
+    }
+
+    const { data: listenerData } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        recuperacionDetectada = true;
+        const destino = `/auth/set-password${window.location.search}${window.location.hash}`;
+        window.location.replace(destino);
+        return;
+      }
+
+      if (event === 'SIGNED_OUT' && !cancelado) {
+        setUsuarioLogueado(null);
+      }
+    });
 
     const restaurarSesion = async () => {
       try {
         const { data, error } = await supabase.auth.getSession();
         if (error) throw error;
-        if (!cancelado && data.session?.user) {
+
+        // Una sesión de recuperación NO debe abrir el ERP.
+        if (!cancelado && !recuperacionDetectada && data.session?.user) {
           await cargarUsuarioDesdeSupabase(data.session.user.id);
         }
       } catch (error: any) {
@@ -1359,12 +1389,16 @@ export default function DashboardPage() {
         await supabase.auth.signOut();
         if (!cancelado) setUsuarioLogueado(null);
       } finally {
-        if (!cancelado) setSesionCargada(true);
+        if (!cancelado && !recuperacionDetectada) setSesionCargada(true);
       }
     };
 
     restaurarSesion();
-    return () => { cancelado = true; };
+
+    return () => {
+      cancelado = true;
+      listenerData.subscription.unsubscribe();
+    };
   }, []);
 
   const iniciarSesionSupabase = async (e: React.FormEvent) => {
