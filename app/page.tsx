@@ -254,6 +254,7 @@ interface TicketGuardado {
   idDb?: number;
   folio: string;
   fecha: string;
+  fechaIso?: string;
   cliente: string;
   metodoPago: string;
   sucursal: string;
@@ -958,7 +959,8 @@ export default function DashboardPage() {
       return {
         idDb: Number(v.id),
         folio: String(v.folio || ''),
-        fecha: v.sold_at ? new Date(v.sold_at).toLocaleString('es-MX') : '',
+        fecha: v.sold_at ? new Date(v.sold_at).toLocaleString('es-MX', { timeZone: 'America/Mexico_City' }) : '',
+        fechaIso: v.sold_at ? String(v.sold_at) : '',
         cliente: String(v.customer_name || 'Público General'),
         metodoPago: String(v.payment_method || ''),
         sucursal: nombreSucursal,
@@ -3510,29 +3512,58 @@ export default function DashboardPage() {
     setVentaExitosa(false);
   };
 
-  const convertirFechaTicket = (fecha: string) => {
-    const fechaConvertida = new Date(fecha);
-    return Number.isNaN(fechaConvertida.getTime()) ? null : fechaConvertida;
+  const ZONA_HORARIA_OPERACION = 'America/Mexico_City';
+
+  const fechaYmdEnMexico = (valor: string | Date) => {
+    const fecha = valor instanceof Date ? valor : new Date(valor);
+    if (Number.isNaN(fecha.getTime())) return '';
+    const partes = new Intl.DateTimeFormat('en-CA', {
+      timeZone: ZONA_HORARIA_OPERACION,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).formatToParts(fecha);
+    const year = partes.find(p => p.type === 'year')?.value || '';
+    const month = partes.find(p => p.type === 'month')?.value || '';
+    const day = partes.find(p => p.type === 'day')?.value || '';
+    return year && month && day ? `${year}-${month}-${day}` : '';
   };
 
-  const ahora = new Date();
+  const fechaTicketYmd = (ticket: TicketGuardado) =>
+    fechaYmdEnMexico(ticket.fechaIso || ticket.fecha);
+
+  const hoyMexico = fechaYmdEnMexico(new Date());
+
+  const restarDiasYmd = (ymd: string, dias: number) => {
+    const [y, m, d] = ymd.split('-').map(Number);
+    if (!y || !m || !d) return '';
+    const fecha = new Date(Date.UTC(y, m - 1, d - dias, 12, 0, 0));
+    return fecha.toISOString().slice(0, 10);
+  };
+
+  const diaSemanaMexico = (() => {
+    const [y, m, d] = hoyMexico.split('-').map(Number);
+    if (!y || !m || !d) return 1;
+    return new Date(Date.UTC(y, m - 1, d, 12, 0, 0)).getUTCDay();
+  })();
+
+  const diasDesdeLunes = diaSemanaMexico === 0 ? 6 : diaSemanaMexico - 1;
+  const inicioSemanaMexico = restarDiasYmd(hoyMexico, diasDesdeLunes);
+
   const ventasDelDia = historialVisibleUsuario
+    .filter((ticket: TicketGuardado) => fechaTicketYmd(ticket) === hoyMexico)
+    .reduce((acc: number, ticket: TicketGuardado) => acc + ticket.total, 0);
+
+  const ventasDeLaSemana = historialVisibleUsuario
     .filter((ticket: TicketGuardado) => {
-      const fechaTicket = convertirFechaTicket(ticket.fecha);
-      return fechaTicket &&
-        fechaTicket.getFullYear() === ahora.getFullYear() &&
-        fechaTicket.getMonth() === ahora.getMonth() &&
-        fechaTicket.getDate() === ahora.getDate();
+      const ymd = fechaTicketYmd(ticket);
+      return Boolean(ymd) && ymd >= inicioSemanaMexico && ymd <= hoyMexico;
     })
     .reduce((acc: number, ticket: TicketGuardado) => acc + ticket.total, 0);
 
+  const mesActualMexico = hoyMexico.slice(0, 7);
   const ventasDelMes = historialVisibleUsuario
-    .filter((ticket: TicketGuardado) => {
-      const fechaTicket = convertirFechaTicket(ticket.fecha);
-      return fechaTicket &&
-        fechaTicket.getFullYear() === ahora.getFullYear() &&
-        fechaTicket.getMonth() === ahora.getMonth();
-    })
+    .filter((ticket: TicketGuardado) => fechaTicketYmd(ticket).startsWith(mesActualMexico))
     .reduce((acc: number, ticket: TicketGuardado) => acc + ticket.total, 0);
 
   const mapaProductosVendidos = new Map<string, { nombre: string; cat: string; qty: number; total: number }>();
@@ -3572,15 +3603,13 @@ export default function DashboardPage() {
       .sort((a, b) => b.total - a.total)
       .slice(0, 5);
 
-  const inicioReporte = fechaInicioReporte ? new Date(`${fechaInicioReporte}T00:00:00`) : null;
-  const finReporte = fechaFinReporte ? new Date(`${fechaFinReporte}T23:59:59`) : null;
   const sucursalReporteEfectiva = usuarioEsAdministrador ? sucursalReporte : nombreSucursalAsignadaUsuario;
 
   const ticketsPeriodoReporte = historialTickets.filter((ticket: TicketGuardado) => {
-    const fechaTicket = convertirFechaTicket(ticket.fecha);
+    const fechaTicket = fechaTicketYmd(ticket);
     if (!fechaTicket) return false;
-    if (inicioReporte && fechaTicket < inicioReporte) return false;
-    if (finReporte && fechaTicket > finReporte) return false;
+    if (fechaInicioReporte && fechaTicket < fechaInicioReporte) return false;
+    if (fechaFinReporte && fechaTicket > fechaFinReporte) return false;
     if (sucursalReporteEfectiva !== 'Todas' && ticket.sucursal !== sucursalReporteEfectiva) return false;
     if (categoriaReporte !== 'Todas' && !ticket.items.some(item => item.categoria === categoriaReporte)) return false;
     return true;
@@ -3601,14 +3630,95 @@ export default function DashboardPage() {
   const gastosPeriodoReporte = gastos
     .filter((gasto: GastoOperativo) => {
       if (!gasto.fecha) return true;
-      const fechaGasto = new Date(`${gasto.fecha}T12:00:00`);
-      if (inicioReporte && fechaGasto < inicioReporte) return false;
-      if (finReporte && fechaGasto > finReporte) return false;
+      const fechaGastoYmd = gasto.fecha || '';
+      if (fechaInicioReporte && fechaGastoYmd < fechaInicioReporte) return false;
+      if (fechaFinReporte && fechaGastoYmd > fechaFinReporte) return false;
       if (sucursalReporteEfectiva !== 'Todas' && gasto.sucursal !== sucursalReporteEfectiva) return false;
       return true;
     })
     .reduce((acc: number, gasto: GastoOperativo) => acc + gasto.total, 0);
   const utilidadNetaPeriodo = ventasPeriodoReporte - costoVentasPeriodo - gastosPeriodoReporte;
+
+  const inventarioReporte = inventarioSucursales
+    .filter((stock: StockSucursal) => {
+      if (sucursalReporteEfectiva !== 'Todas' && stock.sucursal !== sucursalReporteEfectiva) return false;
+      const producto = catalogoProductos.find((p: ProductoCatalogo) => p.id === stock.productoId);
+      if (!producto) return false;
+      if (categoriaReporte !== 'Todas' && producto.categoria !== categoriaReporte) return false;
+      return true;
+    })
+    .map((stock: StockSucursal) => {
+      const producto = catalogoProductos.find((p: ProductoCatalogo) => p.id === stock.productoId)!;
+      const disponible = Math.max(0, stock.stockActual - stock.apartados - stock.danados);
+      return {
+        sku: producto.codigo || producto.claveInterna || '',
+        producto: producto.nombre,
+        categoria: producto.categoria,
+        sucursal: stock.sucursal,
+        almacen: stock.almacen,
+        existencia: stock.stockActual,
+        disponible,
+        exhibicion: stock.exhibicion,
+        apartados: stock.apartados,
+        transito: stock.transito,
+        consignacion: stock.consignacion,
+        danados: stock.danados,
+        minimo: stock.existenciaMinima,
+        maximo: stock.existenciaMaxima,
+        costoPromedio: producto.costoPromedio || 0,
+        valorInventario: (producto.costoPromedio || 0) * stock.stockActual
+      };
+    })
+    .sort((a, b) =>
+      a.sucursal.localeCompare(b.sucursal) ||
+      a.almacen.localeCompare(b.almacen) ||
+      a.producto.localeCompare(b.producto)
+    );
+
+  const piezasTotalesInventarioReporte = inventarioReporte.reduce((acc, r) => acc + r.existencia, 0);
+  const piezasDisponiblesInventarioReporte = inventarioReporte.reduce((acc, r) => acc + r.disponible, 0);
+  const valorInventarioReporte = inventarioReporte.reduce((acc, r) => acc + r.valorInventario, 0);
+
+  const escaparCsv = (valor: string | number) => {
+    const contenido = String(valor ?? '');
+    return `"${contenido.replace(/"/g, '""')}"`;
+  };
+
+  const exportarInventarioCSV = () => {
+    if (inventarioReporte.length === 0) {
+      setMensajeNotif('No hay registros de inventario para los filtros seleccionados.');
+      setModalNotifAbierto(true);
+      return;
+    }
+
+    const encabezados = [
+      'SKU','Producto','Categoría','Sucursal','Almacén','Existencia','Disponible',
+      'Exhibición','Apartados','Tránsito','Consignación','Dañados','Mínimo','Máximo',
+      'Costo Promedio','Valor Inventario'
+    ];
+
+    const filas = inventarioReporte.map(r => [
+      r.sku, r.producto, r.categoria, r.sucursal, r.almacen,
+      r.existencia, r.disponible, r.exhibicion, r.apartados, r.transito,
+      r.consignacion, r.danados, r.minimo, r.maximo,
+      r.costoPromedio.toFixed(2), r.valorInventario.toFixed(2)
+    ].map(escaparCsv).join(','));
+
+    const contenidoCSV = '\uFEFF' + [encabezados.map(escaparCsv).join(','), ...filas].join('\n');
+    const blob = new Blob([contenidoCSV], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const sucArchivo = (sucursalReporteEfectiva || 'Todas').replace(/[^a-zA-Z0-9_-]+/g, '_');
+    link.href = url;
+    link.download = `Inventario_${sucArchivo}_${hoyMexico}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    setMensajeNotif(`Reporte de inventario descargado. Piezas en existencia: ${piezasTotalesInventarioReporte}.`);
+    setModalNotifAbierto(true);
+  };
 
   const exportarExcelReporte = () => {
     const contenidoCSV = `Reporte Financiero (Del ${fechaInicioReporte} al ${fechaFinReporte})\nSucursal,Ventas Periodo,Gastos Op.,Efectivo Caja,Bancos,Utilidad Neta\n${sucursalReporteEfectiva}, ${ventasPeriodoReporte.toFixed(2)}, ${gastosPeriodoReporte.toFixed(2)}, ${efectivoPeriodoReporte.toFixed(2)}, ${bancosPeriodoReporte.toFixed(2)}, ${utilidadNetaPeriodo.toFixed(2)}`;
@@ -4016,10 +4126,14 @@ export default function DashboardPage() {
           {/* PANEL GENERAL */}
           {moduloActivo === 'inicio' && (
             <div className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
                   <p className="text-xs font-semibold text-slate-400 uppercase">Ventas del Día</p>
                   <h3 className="text-2xl font-black text-emerald-400 mt-2">{formatearMoneda(ventasDelDia)}</h3>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                  <p className="text-xs font-semibold text-slate-400 uppercase">Ventas de la Semana</p>
+                  <h3 className="text-2xl font-black text-cyan-400 mt-2">{formatearMoneda(ventasDeLaSemana)}</h3>
                 </div>
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
                   <p className="text-xs font-semibold text-slate-400 uppercase">Ventas del Mes</p>
@@ -6322,7 +6436,8 @@ export default function DashboardPage() {
                   <p className="text-slate-400 text-sm mt-1">Panel ejecutivo para dirección y administración con filtrado por rango de fechas, gastos operativos y desglose de caja vs. bancos.</p>
                 </div>
                 <div className="flex gap-2">
-                  <button type="button" onClick={exportarExcelReporte} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-xl text-xs shadow cursor-pointer">📊 Exportar Excel / CSV</button>
+                  <button type="button" onClick={exportarExcelReporte} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-xl text-xs shadow cursor-pointer">📊 Exportar Ventas / CSV</button>
+                  <button type="button" onClick={exportarInventarioCSV} className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold px-4 py-2 rounded-xl text-xs shadow cursor-pointer">📦 Descargar Inventario</button>
                   <button type="button" onClick={exportarPDFReporte} className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-4 py-2 rounded-xl text-xs shadow cursor-pointer">📄 Exportar PDF</button>
                 </div>
               </div>
@@ -6387,6 +6502,32 @@ export default function DashboardPage() {
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
                   <p className="text-[11px] font-semibold text-slate-400 uppercase">Utilidad Neta</p>
                   <h4 className="text-lg font-black text-blue-400 mt-1">{formatearMoneda(utilidadNetaPeriodo)}</h4>
+                </div>
+              </div>
+
+              <div className="bg-slate-900 border border-cyan-900 rounded-2xl p-4">
+                <div className="flex flex-col md:flex-row justify-between gap-3 md:items-center">
+                  <div>
+                    <h4 className="text-sm font-bold text-cyan-300">📦 Resumen de Inventario</h4>
+                    <p className="text-xs text-slate-400 mt-1">La descarga respeta los filtros de Sucursal y Categoría.</p>
+                  </div>
+                  <button type="button" onClick={exportarInventarioCSV} className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold px-4 py-2 rounded-xl text-xs shadow cursor-pointer whitespace-nowrap">
+                    Descargar existencias
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
+                  <div className="bg-slate-950 border border-slate-800 rounded-xl p-3">
+                    <p className="text-[10px] uppercase text-slate-500">Piezas en existencia</p>
+                    <p className="text-xl font-black text-white mt-1">{piezasTotalesInventarioReporte.toLocaleString('es-MX')}</p>
+                  </div>
+                  <div className="bg-slate-950 border border-slate-800 rounded-xl p-3">
+                    <p className="text-[10px] uppercase text-slate-500">Piezas disponibles</p>
+                    <p className="text-xl font-black text-emerald-400 mt-1">{piezasDisponiblesInventarioReporte.toLocaleString('es-MX')}</p>
+                  </div>
+                  <div className="bg-slate-950 border border-slate-800 rounded-xl p-3">
+                    <p className="text-[10px] uppercase text-slate-500">Valor de inventario</p>
+                    <p className="text-xl font-black text-cyan-400 mt-1">{formatearMoneda(valorInventarioReporte)}</p>
+                  </div>
                 </div>
               </div>
             </div>
