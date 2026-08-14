@@ -3637,7 +3637,43 @@ export default function DashboardPage() {
       return true;
     })
     .reduce((acc: number, gasto: GastoOperativo) => acc + gasto.total, 0);
-  const utilidadNetaPeriodo = ventasPeriodoReporte - costoVentasPeriodo - gastosPeriodoReporte;
+  // Utilidad de ventas: lo ganado por los productos vendidos antes de gastos operativos.
+  const utilidadBrutaPeriodo = ventasPeriodoReporte - costoVentasPeriodo;
+  // Resultado después de gastos: se conserva separado para no confundirlo con la utilidad de las ventas.
+  const resultadoDespuesGastosPeriodo = utilidadBrutaPeriodo - gastosPeriodoReporte;
+
+  const detalleVentasReporte = ticketsPeriodoReporte.flatMap((ticket: TicketGuardado) =>
+    ticket.items
+      .filter((item: ItemVenta) => categoriaReporte === 'Todas' || item.categoria === categoriaReporte)
+      .map((item: ItemVenta) => {
+        const cantidad = Number(item.cantidadVendida || 0);
+        const precioUnitario = Number(item.precio || 0);
+        const descuento = Number(item.descuentoMontoFijo || 0);
+        const ventaLinea = Math.max(0, (precioUnitario * cantidad) - descuento);
+        const costoUnitario = Number(item.costo || 0);
+        const costoTotal = costoUnitario * cantidad;
+        const utilidadLinea = ventaLinea - costoTotal;
+        return {
+          folio: ticket.folio,
+          fecha: fechaTicketYmd(ticket),
+          cliente: ticket.cliente || 'Público General',
+          sucursal: ticket.sucursal,
+          metodoPago: ticket.metodoPago,
+          codigo: item.codigo || '',
+          producto: item.nombre,
+          categoria: item.categoria,
+          cantidad,
+          precioUnitario,
+          descuento,
+          ventaLinea,
+          costoUnitario,
+          costoTotal,
+          utilidadLinea,
+          serie: item.numeroSerie || '',
+          regalo: item.esRegalo === true
+        };
+      })
+  );
 
   const inventarioReporte = inventarioSucursales
     .filter((stock: StockSucursal) => {
@@ -3721,24 +3757,160 @@ export default function DashboardPage() {
   };
 
   const exportarExcelReporte = () => {
-    const contenidoCSV = `Reporte Financiero (Del ${fechaInicioReporte} al ${fechaFinReporte})\nSucursal,Ventas Periodo,Gastos Op.,Efectivo Caja,Bancos,Utilidad Neta\n${sucursalReporteEfectiva}, ${ventasPeriodoReporte.toFixed(2)}, ${gastosPeriodoReporte.toFixed(2)}, ${efectivoPeriodoReporte.toFixed(2)}, ${bancosPeriodoReporte.toFixed(2)}, ${utilidadNetaPeriodo.toFixed(2)}`;
+    if (detalleVentasReporte.length === 0) {
+      setMensajeNotif('No hay ventas para los filtros seleccionados.');
+      setModalNotifAbierto(true);
+      return;
+    }
+
+    const encabezadosDetalle = [
+      'Fecha','Folio','Sucursal','Cliente','Método de Pago','SKU','Producto','Categoría',
+      'Cantidad','Precio Unitario','Descuento','Venta Neta','Costo Unitario',
+      'Costo Total','Utilidad de Venta','Número de Serie'
+    ];
+
+    const filasDetalle = detalleVentasReporte.map(r => [
+      r.fecha, r.folio, r.sucursal, r.cliente, r.metodoPago, r.codigo, r.producto, r.categoria,
+      r.cantidad, r.precioUnitario.toFixed(2), r.descuento.toFixed(2), r.ventaLinea.toFixed(2),
+      r.costoUnitario.toFixed(2), r.costoTotal.toFixed(2), r.utilidadLinea.toFixed(2), r.serie
+    ].map(escaparCsv).join(','));
+
+    const resumen = [
+      ['RESUMEN DEL PERIODO',''],
+      ['Fecha inicio', fechaInicioReporte],
+      ['Fecha fin', fechaFinReporte],
+      ['Sucursal', sucursalReporteEfectiva],
+      ['Ventas', ventasPeriodoReporte.toFixed(2)],
+      ['Costo de productos vendidos', costoVentasPeriodo.toFixed(2)],
+      ['Utilidad bruta de ventas', utilidadBrutaPeriodo.toFixed(2)],
+      ['Gastos operativos', gastosPeriodoReporte.toFixed(2)],
+      ['Resultado después de gastos', resultadoDespuesGastosPeriodo.toFixed(2)],
+      ['Efectivo', efectivoPeriodoReporte.toFixed(2)],
+      ['Otros métodos / Bancos', bancosPeriodoReporte.toFixed(2)]
+    ].map(f => f.map(escaparCsv).join(','));
+
+    const contenidoCSV = '\uFEFF' + [
+      ...resumen,
+      '',
+      encabezadosDetalle.map(escaparCsv).join(','),
+      ...filasDetalle
+    ].join('\n');
+
     const blob = new Blob([contenidoCSV], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `Reporte_Financiero_${fechaInicioReporte}_al_${fechaFinReporte}.csv`;
+    link.download = `Reporte_Detallado_Ventas_${fechaInicioReporte}_al_${fechaFinReporte}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    setMensajeNotif('¡Reporte exportado a Excel / CSV con éxito!');
+    setMensajeNotif('Reporte detallado de ventas exportado a CSV correctamente.');
     setModalNotifAbierto(true);
   };
 
   const exportarPDFReporte = () => {
-    setMensajeNotif('Generando documento PDF ejecutivo para Dirección y Administración...');
-    setModalNotifAbierto(true);
-    window.print();
+    if (detalleVentasReporte.length === 0) {
+      setMensajeNotif('No hay ventas para los filtros seleccionados.');
+      setModalNotifAbierto(true);
+      return;
+    }
+
+    const monedaPdf = (valor: number) =>
+      new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(valor);
+
+    const escaparHtml = (valor: string | number) =>
+      String(valor ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+
+    const filasHtml = detalleVentasReporte.map(r => `
+      <tr>
+        <td>${escaparHtml(r.fecha)}</td>
+        <td>${escaparHtml(r.folio)}</td>
+        <td>${escaparHtml(r.sucursal)}</td>
+        <td>${escaparHtml(r.producto)}</td>
+        <td>${escaparHtml(r.codigo)}</td>
+        <td style="text-align:right">${r.cantidad}</td>
+        <td style="text-align:right">${monedaPdf(r.precioUnitario)}</td>
+        <td style="text-align:right">${monedaPdf(r.ventaLinea)}</td>
+        <td style="text-align:right">${monedaPdf(r.costoUnitario)}</td>
+        <td style="text-align:right">${monedaPdf(r.costoTotal)}</td>
+        <td style="text-align:right">${monedaPdf(r.utilidadLinea)}</td>
+      </tr>
+    `).join('');
+
+    const ventana = window.open('', '_blank', 'width=1200,height=800');
+    if (!ventana) {
+      setMensajeNotif('El navegador bloqueó la ventana del reporte. Permite ventanas emergentes e inténtalo nuevamente.');
+      setModalNotifAbierto(true);
+      return;
+    }
+
+    ventana.document.write(`
+      <!doctype html>
+      <html lang="es">
+      <head>
+        <meta charset="utf-8" />
+        <title>JF Equipos - Reporte ${escaparHtml(fechaInicioReporte)} al ${escaparHtml(fechaFinReporte)}</title>
+        <style>
+          @page { size: landscape; margin: 12mm; }
+          body { font-family: Arial, sans-serif; color:#111827; font-size:11px; }
+          h1 { margin:0 0 4px; font-size:20px; }
+          h2 { margin:16px 0 8px; font-size:14px; }
+          .meta { color:#4b5563; margin-bottom:12px; }
+          .resumen { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin:12px 0 16px; }
+          .card { border:1px solid #d1d5db; border-radius:8px; padding:8px; }
+          .label { color:#6b7280; font-size:9px; text-transform:uppercase; }
+          .valor { font-weight:700; font-size:14px; margin-top:3px; }
+          table { width:100%; border-collapse:collapse; }
+          th, td { border:1px solid #d1d5db; padding:5px; vertical-align:top; }
+          th { background:#f3f4f6; font-size:9px; }
+          tr:nth-child(even) { background:#fafafa; }
+          .nota { margin-top:12px; color:#6b7280; font-size:9px; }
+        </style>
+      </head>
+      <body>
+        <h1>JF Equipos ERP — Reporte detallado de ventas</h1>
+        <div class="meta">
+          Periodo: ${escaparHtml(fechaInicioReporte)} al ${escaparHtml(fechaFinReporte)}
+          · Sucursal: ${escaparHtml(sucursalReporteEfectiva)}
+          · Categoría: ${escaparHtml(categoriaReporte)}
+        </div>
+
+        <div class="resumen">
+          <div class="card"><div class="label">Ventas</div><div class="valor">${monedaPdf(ventasPeriodoReporte)}</div></div>
+          <div class="card"><div class="label">Costo de productos vendidos</div><div class="valor">${monedaPdf(costoVentasPeriodo)}</div></div>
+          <div class="card"><div class="label">Utilidad bruta de ventas</div><div class="valor">${monedaPdf(utilidadBrutaPeriodo)}</div></div>
+          <div class="card"><div class="label">Gastos operativos</div><div class="valor">${monedaPdf(gastosPeriodoReporte)}</div></div>
+        </div>
+
+        <h2>Detalle de productos vendidos</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th><th>Folio</th><th>Sucursal</th><th>Producto</th><th>SKU</th>
+              <th>Cant.</th><th>Precio Unit.</th><th>Venta Neta</th><th>Costo Unit.</th>
+              <th>Costo Total</th><th>Utilidad</th>
+            </tr>
+          </thead>
+          <tbody>${filasHtml}</tbody>
+        </table>
+
+        <div class="nota">
+          Utilidad bruta de ventas = venta neta − costo de los productos vendidos.
+          Resultado después de gastos: ${monedaPdf(resultadoDespuesGastosPeriodo)}.
+        </div>
+        <script>
+          window.onload = () => setTimeout(() => window.print(), 250);
+        </script>
+      </body>
+      </html>
+    `);
+    ventana.document.close();
   };
 
   const limpiarFormularioUsuario = () => {
@@ -6436,9 +6608,9 @@ export default function DashboardPage() {
                   <p className="text-slate-400 text-sm mt-1">Panel ejecutivo para dirección y administración con filtrado por rango de fechas, gastos operativos y desglose de caja vs. bancos.</p>
                 </div>
                 <div className="flex gap-2">
-                  <button type="button" onClick={exportarExcelReporte} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-xl text-xs shadow cursor-pointer">📊 Exportar Ventas / CSV</button>
+                  <button type="button" onClick={exportarExcelReporte} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-xl text-xs shadow cursor-pointer">📊 Descargar Reporte Detallado</button>
                   <button type="button" onClick={exportarInventarioCSV} className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold px-4 py-2 rounded-xl text-xs shadow cursor-pointer">📦 Descargar Inventario</button>
-                  <button type="button" onClick={exportarPDFReporte} className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-4 py-2 rounded-xl text-xs shadow cursor-pointer">📄 Exportar PDF</button>
+                  <button type="button" onClick={exportarPDFReporte} className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-4 py-2 rounded-xl text-xs shadow cursor-pointer">📄 PDF Detallado</button>
                 </div>
               </div>
 
@@ -6482,7 +6654,7 @@ export default function DashboardPage() {
               </div>
 
               {/* Tarjetas de Indicadores */}
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
                   <p className="text-[11px] font-semibold text-slate-400 uppercase">Ventas del Periodo</p>
                   <h4 className="text-lg font-black text-emerald-400 mt-1">{formatearMoneda(ventasPeriodoReporte)}</h4>
@@ -6500,9 +6672,69 @@ export default function DashboardPage() {
                   <h4 className="text-lg font-black text-purple-400 mt-1">{formatearMoneda(bancosPeriodoReporte)}</h4>
                 </div>
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
-                  <p className="text-[11px] font-semibold text-slate-400 uppercase">Utilidad Neta</p>
-                  <h4 className="text-lg font-black text-blue-400 mt-1">{formatearMoneda(utilidadNetaPeriodo)}</h4>
+                  <p className="text-[11px] font-semibold text-slate-400 uppercase">Utilidad de Ventas</p>
+                  <h4 className={`text-lg font-black mt-1 ${utilidadBrutaPeriodo >= 0 ? 'text-blue-400' : 'text-red-400'}`}>{formatearMoneda(utilidadBrutaPeriodo)}</h4>
+                  <p className="text-[9px] text-slate-500 mt-1">Ventas menos costo de productos vendidos</p>
                 </div>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+                  <p className="text-[11px] font-semibold text-slate-400 uppercase">Resultado después de Gastos</p>
+                  <h4 className={`text-lg font-black mt-1 ${resultadoDespuesGastosPeriodo >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatearMoneda(resultadoDespuesGastosPeriodo)}</h4>
+                </div>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+                <div className="p-4 border-b border-slate-800 flex flex-col md:flex-row justify-between gap-2">
+                  <div>
+                    <h4 className="text-sm font-bold text-white">🧾 Detalle de productos vendidos</h4>
+                    <p className="text-xs text-slate-400 mt-1">
+                      Se actualiza automáticamente al cambiar fecha, sucursal o categoría.
+                    </p>
+                  </div>
+                  <div className="text-xs text-slate-400">
+                    {detalleVentasReporte.length} línea(s) de venta
+                  </div>
+                </div>
+
+                {detalleVentasReporte.length === 0 ? (
+                  <div className="p-8 text-center text-slate-500 text-sm">
+                    No hay productos vendidos para los filtros seleccionados.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead className="bg-slate-950 text-slate-400">
+                        <tr>
+                          <th className="px-3 py-3 text-left">Fecha</th>
+                          <th className="px-3 py-3 text-left">Folio</th>
+                          <th className="px-3 py-3 text-left">Producto</th>
+                          <th className="px-3 py-3 text-left">SKU</th>
+                          <th className="px-3 py-3 text-right">Cant.</th>
+                          <th className="px-3 py-3 text-right">Precio Unit.</th>
+                          <th className="px-3 py-3 text-right">Venta Neta</th>
+                          <th className="px-3 py-3 text-right">Costo Unit.</th>
+                          <th className="px-3 py-3 text-right">Costo Total</th>
+                          <th className="px-3 py-3 text-right">Utilidad</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800">
+                        {detalleVentasReporte.map((r, index) => (
+                          <tr key={`${r.folio}-${r.codigo}-${index}`} className="hover:bg-slate-800/40">
+                            <td className="px-3 py-2 text-slate-300 whitespace-nowrap">{r.fecha}</td>
+                            <td className="px-3 py-2 text-blue-300 font-mono">{r.folio}</td>
+                            <td className="px-3 py-2 text-white min-w-[220px]">{r.producto}</td>
+                            <td className="px-3 py-2 text-slate-400 font-mono">{r.codigo}</td>
+                            <td className="px-3 py-2 text-right text-white">{r.cantidad}</td>
+                            <td className="px-3 py-2 text-right text-slate-300">{formatearMoneda(r.precioUnitario)}</td>
+                            <td className="px-3 py-2 text-right text-emerald-400 font-semibold">{formatearMoneda(r.ventaLinea)}</td>
+                            <td className="px-3 py-2 text-right text-slate-300">{formatearMoneda(r.costoUnitario)}</td>
+                            <td className="px-3 py-2 text-right text-amber-300">{formatearMoneda(r.costoTotal)}</td>
+                            <td className={`px-3 py-2 text-right font-bold ${r.utilidadLinea >= 0 ? 'text-blue-400' : 'text-red-400'}`}>{formatearMoneda(r.utilidadLinea)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
 
               <div className="bg-slate-900 border border-cyan-900 rounded-2xl p-4">
