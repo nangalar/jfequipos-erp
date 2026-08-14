@@ -61,7 +61,6 @@ async function resolverRolYSucursal(
     throw new Error('El rol seleccionado no existe.');
   }
 
-  // El Administrador tiene acceso global y no requiere sucursal.
   if (role.name === 'Administrador') {
     return {
       roleId: role.id,
@@ -69,7 +68,6 @@ async function resolverRolYSucursal(
     };
   }
 
-  // Todos los demás usuarios deben pertenecer a una sucursal.
   if (!branchId) {
     throw new Error(
       'Los usuarios no administradores deben tener una sucursal asignada.'
@@ -92,6 +90,33 @@ async function resolverRolYSucursal(
     roleId: role.id,
     branchId: branch.id,
   };
+}
+
+function normalizarCategorias(
+  roleName: string,
+  rawCategories: unknown
+) {
+  if (roleName === 'Administrador') {
+    return ['*'];
+  }
+
+  if (!Array.isArray(rawCategories)) {
+    return ['*'];
+  }
+
+  const categorias = rawCategories
+    .map((categoria) => String(categoria || '').trim())
+    .filter(Boolean);
+
+  if (categorias.length === 0) {
+    return ['*'];
+  }
+
+  if (categorias.includes('*')) {
+    return ['*'];
+  }
+
+  return [...new Set(categorias)];
 }
 
 // ============================================================
@@ -121,6 +146,11 @@ export async function POST(req: NextRequest) {
         ? null
         : Number(body.branchId);
 
+    const allowedCategories = normalizarCategorias(
+      roleName,
+      body.allowedCategories
+    );
+
     if (!fullName || !email || !roleName) {
       return NextResponse.json(
         {
@@ -146,7 +176,6 @@ export async function POST(req: NextRequest) {
       branchId
     );
 
-    // Crear usuario en Supabase Authentication.
     const { data: authData, error: authError } =
       await supabaseAdmin.auth.admin.createUser({
         email,
@@ -168,7 +197,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Crear perfil del ERP.
     const { error: profileError } =
       await supabaseAdmin
         .from('profiles')
@@ -179,10 +207,9 @@ export async function POST(req: NextRequest) {
           role_id: acceso.roleId,
           branch_id: acceso.branchId,
           active: true,
+          allowed_categories: allowedCategories,
         });
 
-    // Si falla profiles, eliminamos también el usuario de Auth
-    // para no dejar registros incompletos.
     if (profileError) {
       await supabaseAdmin.auth.admin.deleteUser(
         authData.user.id
@@ -249,6 +276,11 @@ export async function PATCH(req: NextRequest) {
 
     const active = body.active !== false;
 
+    const allowedCategories = normalizarCategorias(
+      roleName,
+      body.allowedCategories
+    );
+
     if (!id || !fullName || !email || !roleName) {
       return NextResponse.json(
         {
@@ -269,8 +301,6 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
-    // Evita que el Administrador que está operando
-    // desactive accidentalmente su propia cuenta.
     if (
       id === solicitante.user.id &&
       !active
@@ -300,7 +330,6 @@ export async function PATCH(req: NextRequest) {
       authUpdate.password = password;
     }
 
-    // Actualizar Supabase Authentication.
     const { error: authError } =
       await supabaseAdmin.auth.admin.updateUserById(
         id,
@@ -316,7 +345,6 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
-    // Actualizar perfil del ERP.
     const { error: profileError } =
       await supabaseAdmin
         .from('profiles')
@@ -326,6 +354,7 @@ export async function PATCH(req: NextRequest) {
           role_id: acceso.roleId,
           branch_id: acceso.branchId,
           active,
+          allowed_categories: allowedCategories,
         })
         .eq('id', id);
 

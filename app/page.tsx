@@ -273,6 +273,7 @@ interface UsuarioSistema {
   password: string;
   rol: string;
   sucursalId: number | null;
+  categoriasPermitidas: string[];
   activo: boolean;
 }
 
@@ -561,6 +562,7 @@ export default function DashboardPage() {
   const [nuevoPassUsr, setNuevoPassUsr] = useState('');
   const [nuevoRolUsr, setNuevoRolUsr] = useState('Operador / Ventas');
   const [nuevaSucursalUsrId, setNuevaSucursalUsrId] = useState<string>('');
+  const [nuevasCategoriasUsr, setNuevasCategoriasUsr] = useState<string[]>(['*']);
   const [usuarioEditando, setUsuarioEditando] = useState<UsuarioSistema | null>(null);
   const [modalUsuarioAbierto, setModalUsuarioAbierto] = useState(false);
 
@@ -580,25 +582,78 @@ export default function DashboardPage() {
     return nombreSucursal === nombreSucursalAsignadaUsuario;
   };
 
-  const inventarioVisibleUsuario = usuarioEsAdministrador
-    ? inventarioSucursales
-    : inventarioSucursales.filter((inv: StockSucursal) => inv.sucursal === nombreSucursalAsignadaUsuario);
-  const kardexVisibleUsuario = usuarioEsAdministrador
-    ? kardexMovimientos
-    : kardexMovimientos.filter((mov: MovimientoKardex) => mov.sucursal === nombreSucursalAsignadaUsuario);
-  const gastosVisiblesUsuario = usuarioEsAdministrador
-    ? gastos
-    : gastos.filter((g: GastoOperativo) => g.sucursal === nombreSucursalAsignadaUsuario);
-  const auditoriasVisiblesUsuario = usuarioEsAdministrador
-    ? auditorias
-    : auditorias.filter((a: AuditoriaInventario) => a.sucursal === nombreSucursalAsignadaUsuario);
-  const cotizacionesVisiblesUsuario = usuarioEsAdministrador
-    ? cotizaciones
-    : cotizaciones.filter((c: Cotizacion) => c.sucursal === nombreSucursalAsignadaUsuario);
-  const historialVisibleUsuario = usuarioEsAdministrador
-    ? historialTickets
-    : historialTickets.filter((t: TicketGuardado) => t.sucursal === nombreSucursalAsignadaUsuario);
+  const productoPermitidoPorId = (productoId: number) => {
+  const producto = catalogoProductos.find(
+    (p: ProductoCatalogo) => p.id === productoId
+  );
 
+  if (!producto) return false;
+
+  return puedeVerCategoria(producto.categoria);
+};
+
+const inventarioVisibleUsuario = usuarioEsAdministrador
+  ? inventarioSucursales
+  : inventarioSucursales.filter(
+      (inv: StockSucursal) =>
+        inv.sucursal === nombreSucursalAsignadaUsuario &&
+        productoPermitidoPorId(inv.productoId)
+    );
+
+const kardexVisibleUsuario = usuarioEsAdministrador
+  ? kardexMovimientos
+  : kardexMovimientos.filter(
+      (mov: MovimientoKardex) => {
+        const producto = catalogoProductos.find(
+          (p: ProductoCatalogo) => p.nombre === mov.producto
+        );
+
+        return (
+          mov.sucursal === nombreSucursalAsignadaUsuario &&
+          !!producto &&
+          puedeVerCategoria(producto.categoria)
+        );
+      }
+    );
+
+const gastosVisiblesUsuario = usuarioEsAdministrador
+  ? gastos
+  : gastos.filter(
+      (g: GastoOperativo) =>
+        g.sucursal === nombreSucursalAsignadaUsuario
+    );
+
+const auditoriasVisiblesUsuario = usuarioEsAdministrador
+  ? auditorias
+  : auditorias.filter(
+      (a: AuditoriaInventario) =>
+        a.sucursal === nombreSucursalAsignadaUsuario
+    );
+
+const cotizacionesVisiblesUsuario = usuarioEsAdministrador
+  ? cotizaciones
+  : cotizaciones.filter(
+      (c: Cotizacion) =>
+        c.sucursal === nombreSucursalAsignadaUsuario &&
+        c.items.every((item: ItemVenta) =>
+          puedeVerCategoria(item.categoria)
+        )
+    );
+
+const historialVisibleUsuario = usuarioEsAdministrador
+  ? historialTickets
+  : historialTickets
+      .filter(
+        (t: TicketGuardado) =>
+          t.sucursal === nombreSucursalAsignadaUsuario
+      )
+      .map((t: TicketGuardado) => ({
+        ...t,
+        items: t.items.filter((item: ItemVenta) =>
+          puedeVerCategoria(item.categoria)
+        )
+      }))
+      .filter((t: TicketGuardado) => t.items.length > 0);
   useEffect(() => {
     let stream: MediaStream | null = null;
     if (camaraActiva || camaraAltaActiva || camaraInventarioActiva || camaraAuditoriaActiva) {
@@ -1288,7 +1343,7 @@ export default function DashboardPage() {
     if (usr.rol === 'Administrador') {
       const { data: perfiles, error: perfilesError } = await supabase
         .from('profiles')
-        .select('id, full_name, email, branch_id, active, roles(name)')
+        .select('id, full_name, email, branch_id, active, allowed_categories, roles(name)')
         .order('full_name');
 
       if (perfilesError) throw new Error(`No se pudieron cargar los usuarios: ${perfilesError.message}`);
@@ -1302,7 +1357,10 @@ export default function DashboardPage() {
           password: '',
           rol: String(rolRel?.name || ''),
           sucursalId: p.branch_id == null ? null : Number(p.branch_id),
-          activo: p.active !== false
+categoriasPermitidas: Array.isArray(p.allowed_categories)
+  ? p.allowed_categories.map(String)
+  : ['*'],
+activo: p.active !== false
         };
       }));
     } else {
@@ -1313,7 +1371,7 @@ export default function DashboardPage() {
   const cargarUsuarioDesdeSupabase = async (userId: string): Promise<UsuarioSistema> => {
     const { data: perfil, error } = await supabase
       .from('profiles')
-      .select('id, full_name, email, branch_id, active, roles(name)')
+      .select('id, full_name, email, branch_id, active, allowed_categories, roles(name)')
       .eq('id', userId)
       .single();
 
@@ -1328,8 +1386,15 @@ export default function DashboardPage() {
       email: String((perfil as any).email || ''),
       password: '',
       rol: String(rolRel?.name || ''),
-      sucursalId: (perfil as any).branch_id == null ? null : Number((perfil as any).branch_id),
-      activo: (perfil as any).active !== false
+      sucursalId: (perfil as any).branch_id == null
+  ? null
+  : Number((perfil as any).branch_id),
+
+categoriasPermitidas: Array.isArray((perfil as any).allowed_categories)
+  ? (perfil as any).allowed_categories.map(String)
+  : ['*'],
+
+activo: (perfil as any).active !== false
     };
 
     if (!usr.activo) throw new Error('Este usuario se encuentra inactivo.');
@@ -2862,12 +2927,15 @@ export default function DashboardPage() {
     }
 
     const termino = busquedaTexto.trim().toLowerCase();
-    const prod = catalogoProductos.find(
-      (p: ProductoCatalogo) =>
-        p.codigo.toLowerCase() === termino ||
-        p.claveInterna.toLowerCase() === termino ||
-        p.nombre.toLowerCase() === termino
-    );
+   const prod = catalogoProductos.find(
+  (p: ProductoCatalogo) =>
+    puedeVerCategoria(p.categoria) &&
+    (
+      p.codigo.toLowerCase() === termino ||
+      p.claveInterna.toLowerCase() === termino ||
+      p.nombre.toLowerCase() === termino
+    )
+);
 
     if (prod) {
       const stockDisp = obtenerStockSucursal(prod.id, sucursalActivaPOS);
@@ -2957,6 +3025,13 @@ export default function DashboardPage() {
   };
 
   const agregarAlCarrito = (producto: ProductoCatalogo, esRegalo: boolean = false, stockDisp: number, serieFisica: string = '') => {
+if (!puedeVerCategoria(producto.categoria)) {
+  setMensajeNotif(
+    `No tienes permiso para vender productos de la categoría "${producto.categoria}".`
+  );
+  setModalNotifAbierto(true);
+  return;
+}
     if (cotizacionOrigenPOS) {
       setMensajeNotif('No puede agregar artículos a una cotización ya emitida. Genere una nueva cotización si requiere cambios.');
       setModalNotifAbierto(true);
@@ -3123,12 +3198,31 @@ export default function DashboardPage() {
     );
   };
 
-  const productosFiltrados = catalogoProductos.filter(
-    (p: ProductoCatalogo) =>
+  const puedeVerCategoria = (categoria: string) => {
+  if (!usuarioLogueado) return false;
+
+  if (usuarioLogueado.rol === 'Administrador') {
+    return true;
+  }
+
+  const permitidas = usuarioLogueado.categoriasPermitidas || ['*'];
+
+  if (permitidas.includes('*')) {
+    return true;
+  }
+
+  return permitidas.includes(categoria);
+};
+
+const productosFiltrados = catalogoProductos.filter(
+  (p: ProductoCatalogo) =>
+    puedeVerCategoria(p.categoria) &&
+    (
       p.nombre.toLowerCase().includes(busquedaTexto.toLowerCase()) ||
       p.codigo.toLowerCase().includes(busquedaTexto.toLowerCase()) ||
       p.categoria.toLowerCase().includes(busquedaTexto.toLowerCase())
-  );
+    )
+);
 
   const calcularSubtotalSinDescuento = () => {
     return carrito.reduce((acc: number, item: ItemVenta) => {
@@ -3550,21 +3644,45 @@ export default function DashboardPage() {
   const diasDesdeLunes = diaSemanaMexico === 0 ? 6 : diaSemanaMexico - 1;
   const inicioSemanaMexico = restarDiasYmd(hoyMexico, diasDesdeLunes);
 
+  const totalVisibleTicket = (ticket: TicketGuardado) =>
+  ticket.items.reduce(
+    (total: number, item: ItemVenta) =>
+      total +
+      Math.max(
+        0,
+        Number(item.precio || 0) *
+          Number(item.cantidadVendida || 0) -
+          Number(item.descuentoMontoFijo || 0)
+      ),
+    0
+  );
   const ventasDelDia = historialVisibleUsuario
     .filter((ticket: TicketGuardado) => fechaTicketYmd(ticket) === hoyMexico)
-    .reduce((acc: number, ticket: TicketGuardado) => acc + ticket.total, 0);
+    .reduce(
+  (acc: number, ticket: TicketGuardado) =>
+    acc + totalVisibleTicket(ticket),
+  0
+);
 
   const ventasDeLaSemana = historialVisibleUsuario
     .filter((ticket: TicketGuardado) => {
       const ymd = fechaTicketYmd(ticket);
       return Boolean(ymd) && ymd >= inicioSemanaMexico && ymd <= hoyMexico;
     })
-    .reduce((acc: number, ticket: TicketGuardado) => acc + ticket.total, 0);
+    .reduce(
+  (acc: number, ticket: TicketGuardado) =>
+    acc + totalVisibleTicket(ticket),
+  0
+);
 
   const mesActualMexico = hoyMexico.slice(0, 7);
   const ventasDelMes = historialVisibleUsuario
     .filter((ticket: TicketGuardado) => fechaTicketYmd(ticket).startsWith(mesActualMexico))
-    .reduce((acc: number, ticket: TicketGuardado) => acc + ticket.total, 0);
+    .reduce(
+  (acc: number, ticket: TicketGuardado) =>
+    acc + totalVisibleTicket(ticket),
+  0
+);
 
   const mapaProductosVendidos = new Map<string, { nombre: string; cat: string; qty: number; total: number }>();
   historialVisibleUsuario.forEach((ticket: TicketGuardado) => {
@@ -3605,43 +3723,161 @@ export default function DashboardPage() {
 
   const sucursalReporteEfectiva = usuarioEsAdministrador ? sucursalReporte : nombreSucursalAsignadaUsuario;
 
-  const ticketsPeriodoReporte = historialTickets.filter((ticket: TicketGuardado) => {
+  const filtrarItemsPermitidosTicket = (ticket: TicketGuardado): TicketGuardado => ({
+  ...ticket,
+  items: ticket.items.filter((item: ItemVenta) =>
+    puedeVerCategoria(item.categoria)
+  )
+});
+ const ticketsPeriodoReporte = historialVisibleUsuario
+  .map(filtrarItemsPermitidosTicket)
+  .filter((ticket: TicketGuardado) => ticket.items.length > 0)
+  .filter((ticket: TicketGuardado) => {
     const fechaTicket = fechaTicketYmd(ticket);
+
     if (!fechaTicket) return false;
-    if (fechaInicioReporte && fechaTicket < fechaInicioReporte) return false;
-    if (fechaFinReporte && fechaTicket > fechaFinReporte) return false;
-    if (sucursalReporteEfectiva !== 'Todas' && ticket.sucursal !== sucursalReporteEfectiva) return false;
-    if (categoriaReporte !== 'Todas' && !ticket.items.some(item => item.categoria === categoriaReporte)) return false;
+
+    if (
+      fechaInicioReporte &&
+      fechaTicket < fechaInicioReporte
+    ) {
+      return false;
+    }
+
+    if (
+      fechaFinReporte &&
+      fechaTicket > fechaFinReporte
+    ) {
+      return false;
+    }
+
+    if (
+      sucursalReporteEfectiva !== 'Todas' &&
+      ticket.sucursal !== sucursalReporteEfectiva
+    ) {
+      return false;
+    }
+
+    if (
+      categoriaReporte !== 'Todas' &&
+      !ticket.items.some(
+        (item: ItemVenta) =>
+          item.categoria === categoriaReporte
+      )
+    ) {
+      return false;
+    }
+
     return true;
   });
 
-  const ventasPeriodoReporte = ticketsPeriodoReporte.reduce((acc: number, ticket: TicketGuardado) => acc + ticket.total, 0);
-  const efectivoPeriodoReporte = ticketsPeriodoReporte
-    .filter((ticket: TicketGuardado) => ticket.metodoPago.toLowerCase().includes('efectivo'))
-    .reduce((acc: number, ticket: TicketGuardado) => acc + ticket.total, 0);
-  const bancosPeriodoReporte = ticketsPeriodoReporte
-    .filter((ticket: TicketGuardado) => !ticket.metodoPago.toLowerCase().includes('efectivo'))
-    .reduce((acc: number, ticket: TicketGuardado) => acc + ticket.total, 0);
-  const costoVentasPeriodo = ticketsPeriodoReporte.reduce(
-    (acc: number, ticket: TicketGuardado) =>
-      acc + ticket.items.reduce((suma: number, item: ItemVenta) => suma + (item.costo * item.cantidadVendida), 0),
+const ventasPeriodoReporte = ticketsPeriodoReporte.reduce(
+  (acc: number, ticket: TicketGuardado) =>
+    acc +
+    ticket.items
+      .filter(
+        (item: ItemVenta) =>
+          categoriaReporte === 'Todas' ||
+          item.categoria === categoriaReporte
+      )
+      .reduce(
+        (sum: number, item: ItemVenta) =>
+          sum +
+          Math.max(
+            0,
+            Number(item.precio || 0) *
+              Number(item.cantidadVendida || 0) -
+              Number(item.descuentoMontoFijo || 0)
+          ),
+        0
+      ),
+  0
+);
+
+const efectivoPeriodoReporte = ticketsPeriodoReporte
+  .filter((ticket: TicketGuardado) =>
+    ticket.metodoPago.toLowerCase().includes('efectivo')
+  )
+  .reduce((acc: number, ticket: TicketGuardado) => {
+    const totalPermitido = ticket.items
+      .filter(
+        (item: ItemVenta) =>
+          categoriaReporte === 'Todas' ||
+          item.categoria === categoriaReporte
+      )
+      .reduce(
+        (sum: number, item: ItemVenta) =>
+          sum +
+          Math.max(
+            0,
+            Number(item.precio || 0) *
+              Number(item.cantidadVendida || 0) -
+              Number(item.descuentoMontoFijo || 0)
+          ),
+        0
+      );
+
+    return acc + totalPermitido;
+  }, 0);
+
+const bancosPeriodoReporte =
+  ventasPeriodoReporte - efectivoPeriodoReporte;
+
+const costoVentasPeriodo = ticketsPeriodoReporte.reduce(
+  (acc: number, ticket: TicketGuardado) =>
+    acc +
+    ticket.items
+      .filter(
+        (item: ItemVenta) =>
+          categoriaReporte === 'Todas' ||
+          item.categoria === categoriaReporte
+      )
+      .reduce(
+        (sum: number, item: ItemVenta) =>
+          sum +
+          Number(item.costo || 0) *
+            Number(item.cantidadVendida || 0),
+        0
+      ),
+  0
+);
+
+const gastosPeriodoReporte = gastosVisiblesUsuario
+  .filter((g: GastoOperativo) => {
+    if (
+      fechaInicioReporte &&
+      g.fecha < fechaInicioReporte
+    ) {
+      return false;
+    }
+
+    if (
+      fechaFinReporte &&
+      g.fecha > fechaFinReporte
+    ) {
+      return false;
+    }
+
+    if (
+      sucursalReporteEfectiva !== 'Todas' &&
+      g.sucursal !== sucursalReporteEfectiva
+    ) {
+      return false;
+    }
+
+    return true;
+  })
+  .reduce(
+    (acc: number, g: GastoOperativo) =>
+      acc + Number(g.importe || 0),
     0
   );
-  const gastosPeriodoReporte = gastos
-    .filter((gasto: GastoOperativo) => {
-      if (!gasto.fecha) return true;
-      const fechaGastoYmd = gasto.fecha || '';
-      if (fechaInicioReporte && fechaGastoYmd < fechaInicioReporte) return false;
-      if (fechaFinReporte && fechaGastoYmd > fechaFinReporte) return false;
-      if (sucursalReporteEfectiva !== 'Todas' && gasto.sucursal !== sucursalReporteEfectiva) return false;
-      return true;
-    })
-    .reduce((acc: number, gasto: GastoOperativo) => acc + gasto.total, 0);
-  // Utilidad de ventas: lo ganado por los productos vendidos antes de gastos operativos.
-  const utilidadBrutaPeriodo = ventasPeriodoReporte - costoVentasPeriodo;
-  // Resultado después de gastos: se conserva separado para no confundirlo con la utilidad de las ventas.
-  const resultadoDespuesGastosPeriodo = utilidadBrutaPeriodo - gastosPeriodoReporte;
 
+const utilidadBrutaPeriodo =
+  ventasPeriodoReporte - costoVentasPeriodo;
+
+const resultadoDespuesGastosPeriodo =
+  utilidadBrutaPeriodo - gastosPeriodoReporte;
   const detalleVentasReporte = ticketsPeriodoReporte.flatMap((ticket: TicketGuardado) =>
     ticket.items
       .filter((item: ItemVenta) => categoriaReporte === 'Todas' || item.categoria === categoriaReporte)
@@ -3920,6 +4156,7 @@ export default function DashboardPage() {
     setNuevoPassUsr('');
     setNuevoRolUsr('Operador / Ventas');
     setNuevaSucursalUsrId('');
+    setNuevasCategoriasUsr(['*']);
   };
 
   const abrirNuevoUsuario = () => {
@@ -3934,6 +4171,11 @@ export default function DashboardPage() {
     setNuevoPassUsr('');
     setNuevoRolUsr(usuario.rol);
     setNuevaSucursalUsrId(usuario.sucursalId ? String(usuario.sucursalId) : '');
+    setNuevasCategoriasUsr(
+  usuario.categoriasPermitidas?.length
+    ? usuario.categoriasPermitidas
+    : ['*']
+);
     setModalUsuarioAbierto(true);
   };
 
@@ -3997,37 +4239,46 @@ export default function DashboardPage() {
     }
 
     try {
-      if (usuarioEditando) {
-        await llamarApiUsuarios('PATCH', {
-          id: usuarioEditando.id,
-          fullName: nuevoNombreUsr.trim(),
-          email: correoNormalizado,
-          password: nuevoPassUsr.trim() || undefined,
-          roleName: nuevoRolUsr,
-          branchId: sucursalIdSeleccionada,
-          active: usuarioEditando.activo
-        });
-        setMensajeNotif('¡Usuario actualizado en Supabase!');
-      } else {
-        await llamarApiUsuarios('POST', {
-          fullName: nuevoNombreUsr.trim(),
-          email: correoNormalizado,
-          password: nuevoPassUsr.trim(),
-          roleName: nuevoRolUsr,
-          branchId: sucursalIdSeleccionada
-        });
-        setMensajeNotif('¡Usuario creado en Supabase Auth y en el ERP!');
-      }
+  if (usuarioEditando) {
+    await llamarApiUsuarios('PATCH', {
+      id: usuarioEditando.id,
+      fullName: nuevoNombreUsr.trim(),
+      email: correoNormalizado,
+      password: nuevoPassUsr.trim() || undefined,
+      roleName: nuevoRolUsr,
+      branchId: sucursalIdSeleccionada,
+      allowedCategories: rolAdministrador ? ['*'] : nuevasCategoriasUsr,
+      active: usuarioEditando.activo
+    });
 
-      if (usuarioLogueado) await cargarCatalogosSeguridad(usuarioLogueado);
-      setModalUsuarioAbierto(false);
-      limpiarFormularioUsuario();
-      setModalNotifAbierto(true);
-    } catch (error: any) {
-      setMensajeNotif(`No fue posible guardar el usuario: ${error?.message || String(error)}`);
-      setModalNotifAbierto(true);
-    }
-  };
+    setMensajeNotif('¡Usuario actualizado en Supabase!');
+  } else {
+    await llamarApiUsuarios('POST', {
+      fullName: nuevoNombreUsr.trim(),
+      email: correoNormalizado,
+      password: nuevoPassUsr.trim(),
+      roleName: nuevoRolUsr,
+      branchId: sucursalIdSeleccionada,
+      allowedCategories: rolAdministrador ? ['*'] : nuevasCategoriasUsr
+    });
+
+    setMensajeNotif('¡Usuario creado en Supabase Auth y en el ERP!');
+  }
+
+  if (usuarioLogueado) {
+    await cargarCatalogosSeguridad(usuarioLogueado);
+  }
+
+  setModalUsuarioAbierto(false);
+  limpiarFormularioUsuario();
+  setModalNotifAbierto(true);
+
+} catch (error: any) {
+  setMensajeNotif(
+    `No fue posible guardar el usuario: ${error?.message || String(error)}`
+  );
+  setModalNotifAbierto(true);
+}};
 
   const cambiarEstatusUsuario = async (usuario: UsuarioSistema) => {
     try {
@@ -4037,6 +4288,7 @@ export default function DashboardPage() {
         email: usuario.email,
         roleName: usuario.rol,
         branchId: usuario.sucursalId,
+        allowedCategories: usuario.categoriasPermitidas,
         active: !usuario.activo
       });
       setUsuariosSistema(prev => prev.map(u => u.id === usuario.id ? { ...u, activo: !u.activo } : u));
@@ -4634,6 +4886,71 @@ export default function DashboardPage() {
                             )}
                           </>
                         )}
+                        {nuevoRolUsr !== 'Administrador' && (
+  <div className="space-y-3">
+    <label className="block text-xs font-bold text-slate-300 uppercase">
+      Categorías permitidas
+    </label>
+
+    <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3">
+      <label className="flex items-center gap-3 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={nuevasCategoriasUsr.includes('*')}
+          onChange={(e) => {
+            if (e.target.checked) {
+              setNuevasCategoriasUsr(['*']);
+            } else {
+              setNuevasCategoriasUsr([]);
+            }
+          }}
+          className="w-4 h-4"
+        />
+        <span className="text-sm text-white font-semibold">
+          Todas las categorías
+        </span>
+      </label>
+
+      {!nuevasCategoriasUsr.includes('*') && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-2 border-t border-slate-800">
+          {listaCategorias.map((categoria) => (
+            <label
+              key={categoria}
+              className="flex items-center gap-3 cursor-pointer bg-slate-900 rounded-lg px-3 py-2"
+            >
+              <input
+                type="checkbox"
+                checked={nuevasCategoriasUsr.includes(categoria)}
+                onChange={(e) => {
+                  if (e.target.checked) {
+                    setNuevasCategoriasUsr((prev) => [
+                      ...prev.filter((c) => c !== '*'),
+                      categoria
+                    ]);
+                  } else {
+                    setNuevasCategoriasUsr((prev) =>
+                      prev.filter((c) => c !== categoria)
+                    );
+                  }
+                }}
+                className="w-4 h-4"
+              />
+              <span className="text-sm text-slate-200">
+                {categoria}
+              </span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+
+    {nuevasCategoriasUsr.length === 0 && (
+      <p className="text-xs text-red-400">
+        Selecciona al menos una categoría o activa "Todas las categorías".
+      </p>
+    )}
+  </div>
+)}
                       </div>
 
                       <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 text-[10px] text-slate-400">
