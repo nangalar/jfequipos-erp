@@ -333,6 +333,8 @@ export default function DashboardPage() {
 
   const [rolesSistema, setRolesSistema] = useState<RolPermisos[]>([]);
 
+  const [nuevoNombreRol, setNuevoNombreRol] = useState<string>('');
+
   const [rolEditandoPermisos, setRolEditandoPermisos] = useState<RolPermisos | null>(null);
   const [modalPermisosAbierto, setModalPermisosAbierto] = useState<boolean>(false);
 
@@ -363,6 +365,8 @@ export default function DashboardPage() {
   const [seriesValidacion, setSeriesValidacion] = useState<SerieValidacion[]>([]);
   const [listaCategorias, setListaCategorias] = useState<string[]>(['Cardio', 'Pesas libres', 'Fuerza', 'Accesorios', 'Suplementos', 'Paquetes / Combos', 'Regalos']);
   const [nuevaCategoriaInput, setNuevaCategoriaInput] = useState<string>('');
+  const [busquedaProductosCatalogo, setBusquedaProductosCatalogo] = useState<string>('');
+const [busquedaInventarioLista, setBusquedaInventarioLista] = useState<string>('');
 
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [clienteSeleccionadoPOS, setClienteSeleccionadoPOS] = useState<string>('Público General');
@@ -2996,23 +3000,41 @@ activo: (perfil as any).active !== false
       return;
     }
 
-    // Si ya existe un catálogo maestro de series (se cargará desde Excel), valida SKU ↔ serie.
-    const seriesDelSku = seriesValidacion.filter((reg: SerieValidacion) =>
-      reg.sku.trim().toUpperCase() === lineaActual.codigo.trim().toUpperCase()
+   // La serie física se captura al momento de concretar la venta.
+// Si la serie ya existe en el registro maestro, verificamos que no
+// pertenezca a otro SKU y que no haya sido vendida.
+// Si es una serie completamente nueva, se permite continuar.
+
+const registroSerieExistente = seriesValidacion.find(
+  (reg: SerieValidacion) =>
+    normalizarSerie(reg.numeroSerie) === serie
+);
+
+if (registroSerieExistente) {
+  const skuRegistrado = registroSerieExistente.sku
+    .trim()
+    .toUpperCase();
+
+  const skuActual = lineaActual.codigo
+    .trim()
+    .toUpperCase();
+
+  if (skuRegistrado && skuRegistrado !== skuActual) {
+    setMensajeNotif(
+      `⚠️ La serie ${serie} ya está registrada para el SKU ${skuRegistrado} y no corresponde al SKU ${skuActual}. Verifique físicamente el equipo.`
     );
-    if (seriesDelSku.length > 0) {
-      const registroSerie = seriesDelSku.find((reg: SerieValidacion) => normalizarSerie(reg.numeroSerie) === serie);
-      if (!registroSerie) {
-        setMensajeNotif(`⚠️ La serie ${serie} no corresponde al SKU ${lineaActual.codigo}. Verifique físicamente el equipo que se entregará.`);
-        setModalNotifAbierto(true);
-        return;
-      }
-      if (registroSerie.estatus === 'Vendida') {
-        setMensajeNotif(`⚠️ La serie ${serie} ya está marcada como VENDIDA en el catálogo maestro y no puede asignarse nuevamente.`);
-        setModalNotifAbierto(true);
-        return;
-      }
-    }
+    setModalNotifAbierto(true);
+    return;
+  }
+
+  if (registroSerieExistente.estatus === 'Vendida') {
+    setMensajeNotif(
+      `⚠️ La serie ${serie} ya está marcada como VENDIDA y no puede utilizarse nuevamente.`
+    );
+    setModalNotifAbierto(true);
+    return;
+  }
+}
 
     setCarrito((prev: ItemVenta[]) => prev.map((it: ItemVenta) =>
       it.lineaId === lineaSerieEditandoId ? { ...it, numeroSerie: serie } : it
@@ -4297,6 +4319,90 @@ const resultadoDespuesGastosPeriodo =
       setModalNotifAbierto(true);
     }
   };
+const registrarNuevoRolSistema = async (e: React.FormEvent) => {
+  e.preventDefault();
+
+  if (!usuarioEsAdministrador) {
+    setMensajeNotif('Solo el Administrador puede crear nuevos roles.');
+    setModalNotifAbierto(true);
+    return;
+  }
+
+  const nombreLimpio = nuevoNombreRol
+    .trim()
+    .replace(/\s+/g, ' ');
+
+  if (!nombreLimpio) {
+    setMensajeNotif('Escriba el nombre del nuevo rol o área.');
+    setModalNotifAbierto(true);
+    return;
+  }
+
+  if (nombreLimpio.toLocaleLowerCase('es-MX') === 'administrador') {
+    setMensajeNotif('El rol Administrador ya existe y es un rol protegido.');
+    setModalNotifAbierto(true);
+    return;
+  }
+
+  const rolDuplicado = rolesSistema.some(
+    (rol: RolPermisos) =>
+      rol.nombreRol.trim().toLocaleLowerCase('es-MX') ===
+      nombreLimpio.toLocaleLowerCase('es-MX')
+  );
+
+  if (rolDuplicado) {
+    setMensajeNotif(`El rol "${nombreLimpio}" ya existe.`);
+    setModalNotifAbierto(true);
+    return;
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('roles')
+      .insert({
+        name: nombreLimpio,
+        allowed_modules: []
+      })
+      .select('id, name, allowed_modules')
+      .single();
+
+    if (error) {
+      if (error.code === '23505') {
+        setMensajeNotif(`El rol "${nombreLimpio}" ya existe.`);
+        setModalNotifAbierto(true);
+        return;
+      }
+
+      throw error;
+    }
+
+    const nuevoRol: RolPermisos = {
+      id: Number(data.id),
+      nombreRol: String(data.name),
+      modulosPermitidos: Array.isArray(data.allowed_modules)
+        ? data.allowed_modules.map(String)
+        : []
+    };
+
+    setRolesSistema((prev: RolPermisos[]) =>
+      [...prev, nuevoRol].sort((a, b) =>
+        a.nombreRol.localeCompare(b.nombreRol, 'es')
+      )
+    );
+
+    setNuevoNombreRol('');
+
+    // Inmediatamente permite elegir qué módulos tendrá el nuevo rol.
+    setRolEditandoPermisos(nuevoRol);
+    setModalPermisosAbierto(true);
+
+  } catch (error: any) {
+    setMensajeNotif(
+      `No fue posible crear el rol: ${error?.message || String(error)}`
+    );
+    setModalNotifAbierto(true);
+  }
+};
 
   const guardarPermisosRol = async () => {
     if (!rolEditandoPermisos) return;
@@ -4327,6 +4433,47 @@ const resultadoDespuesGastosPeriodo =
     const rolRef = rolesSistema.find(r => r.nombreRol === usuarioLogueado.rol);
     return rolRef ? rolRef.modulosPermitidos.includes(modulo) : false;
   };
+  // ============================================================
+// BUSCADORES DE PRODUCTOS E INVENTARIO
+// ============================================================
+
+const terminoBusquedaProductos = busquedaProductosCatalogo
+  .trim()
+  .toLowerCase();
+
+const productosCatalogoFiltrados = catalogoProductos.filter(
+  (producto: ProductoCatalogo) => {
+    if (!terminoBusquedaProductos) return true;
+
+    return (
+      producto.nombre.toLowerCase().includes(terminoBusquedaProductos) ||
+      producto.codigo.toLowerCase().includes(terminoBusquedaProductos) ||
+      producto.claveInterna.toLowerCase().includes(terminoBusquedaProductos)
+    );
+  }
+);
+
+const terminoBusquedaInventario = busquedaInventarioLista
+  .trim()
+  .toLowerCase();
+
+const inventarioFiltradoUsuario = inventarioVisibleUsuario.filter(
+  (inventario: StockSucursal) => {
+    if (!terminoBusquedaInventario) return true;
+
+    const producto = catalogoProductos.find(
+      (p: ProductoCatalogo) => p.id === inventario.productoId
+    );
+
+    if (!producto) return false;
+
+    return (
+      producto.nombre.toLowerCase().includes(terminoBusquedaInventario) ||
+      producto.codigo.toLowerCase().includes(terminoBusquedaInventario) ||
+      producto.claveInterna.toLowerCase().includes(terminoBusquedaInventario)
+    );
+  }
+);
 
   const { subtotalBruto, descuentoTotal, subtotalNeto, iva, total } = calcularTotal();
 
@@ -5065,7 +5212,39 @@ const resultadoDespuesGastosPeriodo =
                 </div>
 
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4 shadow-xl">
-                  <h4 className="text-sm font-bold text-white uppercase tracking-wider">🛡️ Permisos por Roles (Editable)</h4>
+                  <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+
+  <div>
+    <h4 className="text-sm font-bold text-white uppercase tracking-wider">
+      🛡️ Permisos por Roles / Áreas
+    </h4>
+
+    <p className="text-[10px] text-slate-400 mt-1">
+      Cree nuevas áreas de trabajo y defina qué módulos puede utilizar cada una.
+    </p>
+  </div>
+
+  <form
+    onSubmit={registrarNuevoRolSistema}
+    className="flex flex-col sm:flex-row gap-2"
+  >
+    <input
+      type="text"
+      value={nuevoNombreRol}
+      onChange={(e) => setNuevoNombreRol(e.target.value)}
+      placeholder="Ej. Bodega, Compras, Gerencia"
+      className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white min-w-[220px]"
+    />
+
+    <button
+      type="submit"
+      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer"
+    >
+      + Crear Rol / Área
+    </button>
+  </form>
+
+</div>
                   <div className="space-y-3">
                     {rolesSistema.map((rol, idx) => (
                       <div key={idx} className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2 text-xs">
@@ -5382,6 +5561,38 @@ const resultadoDespuesGastosPeriodo =
                 </div>
               )}
 
+{/* BUSCADOR DEL CATÁLOGO DE PRODUCTOS */}
+<div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+  <div className="flex flex-col md:flex-row gap-3 items-center">
+    <div className="relative flex-1 w-full">
+      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+        🔎
+      </span>
+
+      <input
+        type="text"
+        value={busquedaProductosCatalogo}
+        onChange={(e) => setBusquedaProductosCatalogo(e.target.value)}
+        placeholder="Buscar producto por nombre, SKU o clave..."
+        className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-11 pr-4 py-3 text-sm text-white focus:border-blue-500 outline-none"
+      />
+    </div>
+
+    {busquedaProductosCatalogo && (
+      <button
+        type="button"
+        onClick={() => setBusquedaProductosCatalogo('')}
+        className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-3 rounded-xl text-xs font-bold cursor-pointer"
+      >
+        ✕ Limpiar
+      </button>
+    )}
+  </div>
+
+  <p className="text-[10px] text-slate-500 mt-2">
+    Mostrando {productosCatalogoFiltrados.length} de {catalogoProductos.length} productos
+  </p>
+</div>
               {/* Listado de Productos */}
               <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
                 <div className="overflow-x-auto">
@@ -5403,7 +5614,7 @@ const resultadoDespuesGastosPeriodo =
                           </td>
                         </tr>
                       )}
-                      {catalogoProductos.map((prod: ProductoCatalogo) => (
+                      {productosCatalogoFiltrados.map((prod: ProductoCatalogo) => (
                         <tr key={prod.id} className="hover:bg-slate-800/40">
                           <td className="p-4 font-mono text-blue-400 text-xs">{prod.codigo}</td>
                           <td className="p-4 font-medium text-white text-xs">
@@ -5669,6 +5880,36 @@ const resultadoDespuesGastosPeriodo =
               {/* TABLA DE EXISTENCIAS POR SUCURSAL Y ALMACÉN CON BOTÓN DE MODIFICAR */}
               <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl p-6 space-y-4">
                 <h4 className="text-sm font-bold text-white uppercase tracking-wider">📦 Existencias por Almacén y Ubicaciones (Acciones de Salida/Traspaso)</h4>
+{/* BUSCADOR DE EXISTENCIAS */}
+<div className="flex flex-col md:flex-row gap-3 items-center">
+  <div className="relative flex-1 w-full">
+    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+      🔎
+    </span>
+
+    <input
+      type="text"
+      value={busquedaInventarioLista}
+      onChange={(e) => setBusquedaInventarioLista(e.target.value)}
+      placeholder="Buscar inventario por nombre o SKU..."
+      className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-11 pr-4 py-3 text-sm text-white focus:border-blue-500 outline-none"
+    />
+  </div>
+
+  {busquedaInventarioLista && (
+    <button
+      type="button"
+      onClick={() => setBusquedaInventarioLista('')}
+      className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-3 rounded-xl text-xs font-bold cursor-pointer"
+    >
+      ✕ Limpiar
+    </button>
+  )}
+</div>
+
+<p className="text-[10px] text-slate-500">
+  Mostrando {inventarioFiltradoUsuario.length} registros de inventario
+</p>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse">
                     <thead>
@@ -5682,7 +5923,7 @@ const resultadoDespuesGastosPeriodo =
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 text-sm">
-                      {inventarioVisibleUsuario.map((inv: StockSucursal, idx: number) => {
+                      {inventarioFiltradoUsuario.map((inv: StockSucursal, idx: number) => {
                         const prod = catalogoProductos.find(p => p.id === inv.productoId);
                         return (
                           <tr key={idx} className="hover:bg-slate-800/40">
