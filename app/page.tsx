@@ -4226,11 +4226,16 @@ const productosFiltrados = catalogoProductos.filter(
   };
 
   const ejecutarDescargaTicketPDF = (ticket: TicketGuardado) => {
-    const ventanaImpresion = window.open('', '_blank', 'width=450,height=600');
+    const ventanaImpresion = window.open(
+  '',
+  '_blank',
+  'width=950,height=850,scrollbars=yes,resizable=yes'
+);
     if (!ventanaImpresion) {
       alert('Por favor permita las ventanas emergentes (pop-ups) para descargar el PDF del ticket.');
       return;
     }
+    const logoUrl = `${window.location.origin}/logo-jf-equipos.jpeg`;
 
     let htmlContenido = `
       <!DOCTYPE html>
@@ -4238,48 +4243,415 @@ const productosFiltrados = catalogoProductos.filter(
         <head>
           <title>Ticket de Venta - ${ticket.folio}</title>
           <style>
-            body { font-family: 'Courier New', Courier, monospace; font-size: 12px; color: #000; padding: 15px; width: 320px; margin: 0 auto; }
-            h2, h3 { text-align: center; margin: 5px 0; }
-            .linea { border-bottom: 1px dashed #000; margin: 10px 0; }
-            .flex { display: flex; justify-content: space-between; }
-            .bold { font-weight: bold; }
-            @media print {
-              body { width: 100%; }
-            }
-          </style>
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    padding: 32px;
+    background: #f1f5f9;
+    font-family: Arial, Helvetica, sans-serif;
+    color: #0f172a;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  .documento {
+    width: 100%;
+    max-width: 820px;
+    margin: 0 auto;
+    background: #ffffff;
+    border-radius: 18px;
+    overflow: hidden;
+    box-shadow: 0 10px 35px rgba(15, 23, 42, 0.12);
+    border: 1px solid #e2e8f0;
+  }
+
+  .encabezado {
+    padding: 28px 34px;
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    color: white;
+  }
+
+.encabezado-contenido {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+}
+
+.logo-empresa {
+  width: 150px;
+  max-height: 120px;
+  object-fit: contain;
+  border-radius: 12px;
+}
+
+.encabezado-texto {
+  flex: 1;
+  text-align: right;
+}
+
+.documento-titulo {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+}
+
+.datos-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 18px;
+  margin-bottom: 22px;
+}
+
+.dato {
+  padding: 12px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+}
+
+.dato-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  margin-bottom: 3px;
+}
+
+.dato-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.seccion-titulo {
+.productos-tabla {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+  margin-bottom: 22px;
+}
+
+.productos-tabla thead {
+  background: #f1f5f9;
+}
+
+.productos-tabla th {
+  padding: 11px 10px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: #475569;
+  border-bottom: 2px solid #cbd5e1;
+}
+
+.productos-tabla td {
+  padding: 12px 10px;
+  border-bottom: 1px solid #e2e8f0;
+  vertical-align: top;
+}
+
+.productos-tabla th:first-child,
+.productos-tabla td:first-child {
+  text-align: left;
+}
+
+.productos-tabla th:not(:first-child),
+.productos-tabla td:not(:first-child) {
+  text-align: right;
+}
+
+.nombre-producto {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.detalle-producto {
+  margin-top: 5px;
+  font-size: 10px;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.importe-producto {
+  font-weight: 800;
+  color: #0f172a;
+  white-space: nowrap;
+}
+  margin: 22px 0 12px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #334155;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+  .empresa {
+    font-size: 27px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    margin: 0;
+  }
+
+  .subtitulo {
+    margin-top: 5px;
+    color: #cbd5e1;
+    font-size: 13px;
+  }
+
+  .tipo-documento {
+    display: inline-block;
+    margin-top: 18px;
+    padding: 7px 14px;
+    border-radius: 999px;
+    background: #10b981;
+    color: #ffffff;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+  }
+
+  .contenido {
+    padding: 30px 34px 34px;
+  }
+
+  h2,
+  h3 {
+    margin: 0;
+  }
+
+  p {
+    margin: 5px 0;
+  }
+
+  .linea {
+    border: 0;
+    border-bottom: 1px solid #e2e8f0;
+    margin: 18px 0;
+  }
+
+  .flex {
+    display: flex;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 6px 0;
+  }
+
+  .bold {
+    font-weight: 800;
+  }
+
+  strong {
+    color: #334155;
+  }
+
+  .flex span:last-child {
+    font-weight: 700;
+    text-align: right;
+  }
+
+  .total-destacado {
+    margin-top: 18px;
+    border-radius: 14px;
+    background: #ecfdf5;
+    border: 1px solid #a7f3d0;
+    padding: 18px 20px;
+    font-size: 18px;
+    font-weight: 800;
+    color: #047857;
+  }
+
+  .pie {
+    margin-top: 28px;
+    padding-top: 18px;
+    border-top: 1px solid #e2e8f0;
+    text-align: center;
+    color: #64748b;
+    font-size: 12px;
+  }
+
+  @page {
+    size: Letter;
+    margin: 12mm;
+  }
+
+  @media print {
+    body {
+      padding: 0;
+      background: #ffffff;
+    }
+
+    .documento {
+      max-width: none;
+      box-shadow: none;
+      border: 0;
+      border-radius: 0;
+    }
+
+    .encabezado {
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    .total-destacado {
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+  }
+</style>
         </head>
         <body>
-          <h2>JF EQUIPOS S.A. DE C.V.</h2>
-          <h3>TICKET DE VENTA Y GARANTÍA</h3>
-          <div class="linea"></div>
-          <p><strong>Folio:</strong> ${ticket.folio}</p>
-          <p><strong>Cliente:</strong> ${ticket.cliente}</p>
-          <p><strong>Fecha:</strong> ${ticket.fecha}</p>
-          <p><strong>Método de Pago:</strong> ${ticket.metodoPago}</p>
-          <div class="linea"></div>
-          <strong>DESCRIPCIÓN DE ARTÍCULOS:</strong><br><br>
+  <div class="documento">
+
+    <div class="encabezado">
+      <div class="encabezado-contenido">
+
+        <img
+          src="${logoUrl}"
+          alt="JF Equipos"
+          class="logo-empresa"
+        />
+
+        <div class="encabezado-texto">
+          <div class="documento-titulo">
+            TICKET DE VENTA
+          </div>
+
+          <div class="subtitulo">
+            Comprobante de compra y garantía
+          </div>
+
+          <div class="tipo-documento">
+            JF EQUIPOS
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="contenido">
+
+      <div class="datos-grid">
+
+        <div class="dato">
+          <span class="dato-label">Folio</span>
+          <span class="dato-value">${ticket.folio}</span>
+        </div>
+
+        <div class="dato">
+          <span class="dato-label">Fecha</span>
+          <span class="dato-value">${ticket.fecha}</span>
+        </div>
+
+        <div class="dato">
+          <span class="dato-label">Cliente</span>
+          <span class="dato-value">${ticket.cliente}</span>
+        </div>
+
+        <div class="dato">
+          <span class="dato-label">Método de pago</span>
+          <span class="dato-value">${ticket.metodoPago}</span>
+        </div>
+
+      </div>
+
+      <div class="seccion-titulo">
+        Detalle de productos vendidos
+      </div>
+      <table class="productos-tabla">
+  <thead>
+    <tr>
+      <th>Producto</th>
+      <th>Cant.</th>
+      <th>Precio Unit.</th>
+      <th>Importe</th>
+    </tr>
+  </thead>
+  <tbody>
     `;
 
     ticket.items.forEach((it, idx) => {
       const unitFinal = it.esRegalo ? 0.00 : Math.max(0.00, (it.precio || 0) - (it.descuentoMontoFijo || 0));
       htmlContenido += `
-        <div>${idx + 1}. ${it.cantidadVendida}x ${it.nombre}</div>
-        <div class="flex"><span>Precio:</span><span>${formatearMoneda(unitFinal * it.cantidadVendida)}</span></div>
-        ${it.requiereSerie && it.numeroSerie ? `<div>📌 N/S: ${it.numeroSerie}</div>` : ''}
-        ${it.fechaGarantia !== 'Sin garantía' ? `<div>🛡️ Garantía: ${it.fechaGarantia}</div>` : ''}
-        <br>
-      `;
+  <tr>
+    <td>
+      <div class="nombre-producto">
+        ${idx + 1}. ${it.nombre}
+      </div>
+
+      <div class="detalle-producto">
+        ${
+          it.requiereSerie && it.numeroSerie
+            ? `N/S: ${it.numeroSerie}<br>`
+            : ''
+        }
+
+        ${
+          it.fechaGarantia !== 'Sin garantía'
+            ? `Garantía: ${it.fechaGarantia}`
+            : ''
+        }
+      </div>
+    </td>
+
+    <td>
+      ${it.cantidadVendida}
+    </td>
+
+    <td>
+      ${formatearMoneda(unitFinal)}
+    </td>
+
+    <td class="importe-producto">
+      ${formatearMoneda(unitFinal * it.cantidadVendida)}
+    </td>
+  </tr>
+`;
     });
+    htmlContenido += `
+  </tbody>
+</table>
+`;
 
     htmlContenido += `
           <div class="linea"></div>
+          <div class="resumen-totales">
           <div class="flex"><span>Subtotal Bruto:</span><span>${formatearMoneda(ticket.subtotalBruto)}</span></div>
           <div class="flex"><span>Descuentos:</span><span>-${formatearMoneda(ticket.descuentoTotal)}</span></div>
           <div class="flex"><span>IVA incluido (16%):</span><span>${formatearMoneda(ticket.iva)}</span></div>
           <div class="linea"></div>
-          <div class="flex bold" style="font-size: 14px;"><span>TOTAL A PAGAR:</span><span>${formatearMoneda(ticket.total)}</span></div>
+          <div
+  class="flex"
+  style="
+    margin-top: 14px;
+    padding: 18px 20px;
+    background: #111827;
+    border: 2px solid #d4af37;
+    border-radius: 12px;
+    color: #ffffff;
+    font-size: 17px;
+    font-weight: 800;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  "
+>
+          <span>TOTAL A PAGAR:</span><span style="color:#f6c453; font-size:20px;">${formatearMoneda(ticket.total)}</span></div>
+          </div>
           <div class="linea"></div>
-          <p style="text-align: center;">¡Gracias por su preferencia!<br>Conserve este ticket para cualquier aclaración o garantía.</p>
+          <div class="pie">
+  <strong>Gracias por su compra</strong><br>
+  JF Equipos · Equipos de gimnasio<br>
+  Conserve este documento para cualquier aclaración o garantía en caso de que aplique.
+</div>
+
+    </div>
+  </div>
+
           <script>
             window.onload = function() {
               window.print();
@@ -4816,6 +5188,41 @@ const detalleVentasReportePaginado =
         <meta charset="utf-8" />
         <title>JF Equipos - Reporte ${escaparHtml(fechaInicioReporte)} al ${escaparHtml(fechaFinReporte)}</title>
         <style>
+        .resumen-totales {
+  margin-top: 22px;
+  margin-left: auto;
+  width: 100%;
+  max-width: 390px;
+  padding: 18px 20px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+}
+
+.resumen-totales .flex {
+  padding: 7px 0;
+  color: #475569;
+}
+
+.total-final {
+  margin-top: 12px;
+  padding: 17px 18px;
+  background: linear-gradient(135deg, #111827 0%, #1e293b 100%);
+  border: 1px solid #d4af37;
+  border-radius: 12px;
+  color: #ffffff;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.total-final span:first-child {
+  color: #f8fafc;
+}
+
+.total-final span:last-child {
+  color: #f6c453;
+  font-size: 19px;
+}
           @page { size: landscape; margin: 12mm; }
           body { font-family: Arial, sans-serif; color:#111827; font-size:11px; }
           h1 { margin:0 0 4px; font-size:20px; }
