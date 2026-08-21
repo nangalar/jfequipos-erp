@@ -3,6 +3,14 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 
+interface ComponentePaquete {
+  productoId: number;
+  sku: string;
+  nombre: string;
+  precioLista: number;
+  numeroSerie: string;
+  cantidad: number;
+}
 interface ProductoCatalogo {
   id: number;
   claveInterna: string;
@@ -38,7 +46,7 @@ interface ProductoCatalogo {
   ultimaModificacion: string;
   esRegalo?: boolean;
   esPaqueteDefinido?: boolean;
-  componentesPaquete?: { productoId: number; nombre: string; precioLista: number; numeroSerie: string }[];
+  componentesPaquete?: ComponentePaquete[];
 }
 
 interface StockSucursal {
@@ -231,6 +239,7 @@ interface ItemVenta {
   esRegalo: boolean;
   esPaqueteComponente: boolean;
   nombrePaqueteOrigen?: string;
+  paqueteInstanciaId?: string;
   precioListaOriginal?: number;
   descuentoMontoFijo: number;
   fechaGarantia: string;
@@ -512,6 +521,8 @@ const [busquedaInventarioLista, setBusquedaInventarioLista] = useState<string>('
   const [fechaFinReporte, setFechaFinReporte] = useState(new Date().toISOString().split('T')[0]);
   const [sucursalReporte, setSucursalReporte] = useState('Todas');
   const [categoriaReporte, setCategoriaReporte] = useState('Todas');
+  const [paginaDetalleReporte, setPaginaDetalleReporte] = useState(1);
+const DETALLE_REPORTE_POR_PAGINA = 15;
 
   const [sucursalActivaPOS, setSucursalActivaPOS] = useState<string>('');
   const [carrito, setCarrito] = useState<ItemVenta[]>([]);
@@ -525,8 +536,11 @@ const [busquedaInventarioLista, setBusquedaInventarioLista] = useState<string>('
   const [modalSinStockAbierto, setModalSinStockAbierto] = useState<boolean>(false);
   const [mensajeSinStock, setMensajeSinStock] = useState<string>('');
 
-  const [componentesSeleccionadosPaquete, setComponentesSeleccionadosPaquete] = useState<{ productoId: number; nombre: string; precioLista: number; numeroSerie: string }[]>([]);
-  const [idProdParaPaquete, setIdProdParaPaquete] = useState<string>('');
+  const [componentesSeleccionadosPaquete, setComponentesSeleccionadosPaquete] =
+  useState<ComponentePaquete[]>([]);
+
+const [busquedaComponentePaquete, setBusquedaComponentePaquete] =
+  useState<string>('');
 
   const [historialTickets, setHistorialTickets] = useState<TicketGuardado[]>([]);
   const [camaraActiva, setCamaraActiva] = useState<boolean>(false);
@@ -724,14 +738,24 @@ const historialVisibleUsuario = usuarioEsAdministrador
 
   const mapearProductoDb = (row: any): ProductoCatalogo => {
     const proveedorRel = relacionUnicaDb(row.suppliers);
-    const componentes = Array.isArray(row.package_components)
-      ? row.package_components.map((c: any) => ({
-          productoId: Number(c.productoId ?? c.product_id ?? 0),
-          nombre: String(c.nombre ?? c.name ?? ''),
-          precioLista: Number(c.precioLista ?? c.list_price ?? 0),
-          numeroSerie: String(c.numeroSerie ?? c.serial_number ?? 'N/A')
-        })).filter((c: any) => c.productoId > 0)
-      : [];
+    const componentes: ComponentePaquete[] = Array.isArray(row.package_components)
+  ? row.package_components
+      .map((c: any) => ({
+        productoId: Number(c.productoId ?? c.product_id ?? 0),
+        sku: String(c.sku ?? ''),
+        nombre: String(c.nombre ?? c.name ?? ''),
+        precioLista: Number(c.precioLista ?? c.list_price ?? 0),
+        numeroSerie: String(c.numeroSerie ?? c.serial_number ?? 'N/A'),
+
+        // Los paquetes anteriores no tenían cantidad.
+        // Se interpretan automáticamente como 1 unidad.
+        cantidad: Math.max(
+          1,
+          Number(c.cantidad ?? c.quantity ?? 1) || 1
+        )
+      }))
+      .filter((c: ComponentePaquete) => c.productoId > 0)
+  : [];
 
     return {
       id: Number(row.id),
@@ -1613,15 +1637,181 @@ activo: (perfil as any).active !== false
     return `$${valor.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MXN`;
   };
 
-  const obtenerStockSucursal = (productoId: number, sucursal: string) => {
-    // Disponible para venta/cotización = existencia física - apartados vigentes.
-    // Se suman todos los almacenes de la sucursal.
-    return inventarioSucursales
-      .filter((i: StockSucursal) => i.productoId === productoId && i.sucursal === sucursal)
-      .reduce((acc: number, i: StockSucursal) => acc + Math.max(0, i.stockActual - i.apartados), 0);
-  };
+  const obtenerStockSucursal = (
+  productoId: number,
+  sucursal: string
+) => {
+  // Disponible real:
+  // existencia física - apartados - dañados.
+  // Suma todos los almacenes pertenecientes a la sucursal.
+  return inventarioSucursales
+    .filter(
+      (i: StockSucursal) =>
+        i.productoId === productoId &&
+        i.sucursal === sucursal
+    )
+    .reduce(
+      (acc: number, i: StockSucursal) =>
+        acc +
+        Math.max(
+          0,
+          Number(i.stockActual || 0) -
+            Number(i.apartados || 0) -
+            Number(i.danados || 0)
+        ),
+      0
+    );
+};
+const obtenerDisponibilidadPaquete = (
+  paquete: ProductoCatalogo,
+  sucursal: string
+) => {
+  if (
+    !paquete.esPaqueteDefinido ||
+    !paquete.componentesPaquete ||
+    paquete.componentesPaquete.length === 0
+  ) {
+    return 0;
+  }
 
-  const registrarCategoriaNueva = async (e: React.FormEvent) => {
+  /*
+    Agrupamos por producto porque:
+
+    - Los paquetes nuevos tendrán "cantidad".
+    - Los paquetes anteriores podrían tener el mismo producto
+      repetido varias veces.
+
+    Así ambos formatos funcionan correctamente.
+  */
+  const cantidadesNecesarias = new Map<number, number>();
+
+  paquete.componentesPaquete.forEach(
+    (comp: ComponentePaquete) => {
+      const cantidad = Math.max(
+        1,
+        Number(comp.cantidad || 1)
+      );
+
+      cantidadesNecesarias.set(
+        comp.productoId,
+        (cantidadesNecesarias.get(comp.productoId) || 0) +
+          cantidad
+      );
+    }
+  );
+
+  let maximoPaquetes = Number.POSITIVE_INFINITY;
+
+  cantidadesNecesarias.forEach(
+    (cantidadNecesaria: number, productoId: number) => {
+      const stockDisponible = obtenerStockSucursal(
+        productoId,
+        sucursal
+      );
+
+      const paquetesPosibles = Math.floor(
+        stockDisponible / cantidadNecesaria
+      );
+
+      maximoPaquetes = Math.min(
+        maximoPaquetes,
+        paquetesPosibles
+      );
+    }
+  );
+
+  if (!Number.isFinite(maximoPaquetes)) {
+    return 0;
+  }
+
+  return Math.max(0, maximoPaquetes);
+};
+const obtenerDisponibilidadProductoVenta = (
+  producto: ProductoCatalogo,
+  sucursal: string
+) => {
+  if (producto.esPaqueteDefinido) {
+    return obtenerDisponibilidadPaquete(
+      producto,
+      sucursal
+    );
+  }
+
+  return obtenerStockSucursal(
+    producto.id,
+    sucursal
+  );
+};
+
+
+// ==========================================================
+// INVENTARIO FÍSICO YA COMPROMETIDO EN EL CARRITO
+// ==========================================================
+const cantidadFisicaComprometidaEnCarrito = (
+  items: ItemVenta[],
+  productoId: number,
+  sucursal: string
+) => {
+  return items
+    .filter((item: ItemVenta) => {
+      const productoFisicoId =
+        item.productoInventarioId ||
+        item.productoIdCatalogo ||
+        item.id;
+
+      return (
+        productoFisicoId === productoId &&
+        item.sucursal === sucursal
+      );
+    })
+    .reduce((total: number, item: ItemVenta) => {
+      if (item.esPaqueteComponente) {
+        return (
+          total +
+          Math.max(
+            0,
+            Number(item.cantidadInventario || 0)
+          )
+        );
+      }
+
+      return (
+        total +
+        Math.max(
+          1,
+          Number(item.cantidadVendida || 1)
+        )
+      );
+    }, 0);
+};
+
+
+// ==========================================================
+// STOCK DISPONIBLE DESCONTANDO LO QUE YA ESTÁ EN EL CARRITO
+// ==========================================================
+const obtenerStockRestanteConsiderandoCarrito = (
+  productoId: number,
+  sucursal: string,
+  items: ItemVenta[] = carrito
+) => {
+  const disponibleBase = obtenerStockSucursal(
+    productoId,
+    sucursal
+  );
+
+  const comprometido =
+    cantidadFisicaComprometidaEnCarrito(
+      items,
+      productoId,
+      sucursal
+    );
+
+  return Math.max(
+    0,
+    disponibleBase - comprometido
+  );
+};
+const registrarCategoriaNueva = async (e: React.FormEvent) => {
     e.preventDefault();
     const nombreCategoria = nuevaCategoriaInput.trim();
     if (!nombreCategoria) return;
@@ -1654,21 +1844,186 @@ activo: (perfil as any).active !== false
     }
   };
 
-  const agregarComponenteAPaquete = () => {
-    if (!idProdParaPaquete) return;
-    const prodRef = catalogoProductos.find(p => p.id === Number(idProdParaPaquete));
-    if (prodRef) {
-      setComponentesSeleccionadosPaquete(prev => [
-        ...prev,
-        { productoId: prodRef.id, nombre: prodRef.nombre, precioLista: prodRef.precio, numeroSerie: prodRef.numeroSerie }
-      ]);
-      setIdProdParaPaquete('');
-    }
-  };
+  const agregarComponenteAPaquete = (productoId: number) => {
+  const prodRef = catalogoProductos.find(
+    (p: ProductoCatalogo) => p.id === productoId
+  );
 
-  const quitarComponentePaquete = (index: number) => {
-    setComponentesSeleccionadosPaquete(prev => prev.filter((_, i) => i !== index));
-  };
+  if (!prodRef) return;
+
+  // No permitimos meter un paquete dentro de otro paquete.
+  if (prodRef.esPaqueteDefinido) {
+    setMensajeNotif(
+      'No se puede agregar un paquete como componente de otro paquete.'
+    );
+    setModalNotifAbierto(true);
+    return;
+  }
+
+  setComponentesSeleccionadosPaquete(
+    (prev: ComponentePaquete[]) => {
+      const existente = prev.find(
+        (comp: ComponentePaquete) =>
+          comp.productoId === prodRef.id
+      );
+
+      // Si ya estaba agregado, aumentamos la cantidad
+      // en vez de duplicar el renglón.
+      if (existente) {
+        return prev.map((comp: ComponentePaquete) =>
+          comp.productoId === prodRef.id
+            ? {
+                ...comp,
+                cantidad: Math.max(1, comp.cantidad || 1) + 1
+              }
+            : comp
+        );
+      }
+
+      return [
+        ...prev,
+        {
+          productoId: prodRef.id,
+          sku: prodRef.codigo,
+          nombre: prodRef.nombre,
+          precioLista: prodRef.precio,
+          numeroSerie: 'N/A',
+          cantidad: 1
+        }
+      ];
+    }
+  );
+
+  setBusquedaComponentePaquete('');
+};
+
+const cambiarCantidadComponentePaquete = (
+  index: number,
+  nuevaCantidad: number
+) => {
+  const cantidadSegura = Math.max(
+    1,
+    Math.floor(Number(nuevaCantidad) || 1)
+  );
+
+  setComponentesSeleccionadosPaquete(
+    (prev: ComponentePaquete[]) =>
+      prev.map((comp: ComponentePaquete, i: number) =>
+        i === index
+          ? { ...comp, cantidad: cantidadSegura }
+          : comp
+      )
+  );
+};
+
+const quitarComponentePaquete = (index: number) => {
+  setComponentesSeleccionadosPaquete(
+    (prev: ComponentePaquete[]) =>
+      prev.filter((_, i) => i !== index)
+  );
+};
+const agregarComponentePaqueteEdicion = (productoId: number) => {
+  if (!productoSeleccionadoEdicion) return;
+
+  const producto = catalogoProductos.find(
+    (p: ProductoCatalogo) => p.id === productoId
+  );
+
+  if (!producto) return;
+
+  if (producto.esPaqueteDefinido) {
+    setMensajeNotif(
+      'No se puede agregar un paquete dentro de otro paquete.'
+    );
+    setModalNotifAbierto(true);
+    return;
+  }
+
+  setProductoSeleccionadoEdicion((prev) => {
+    if (!prev) return prev;
+
+    const actuales: ComponentePaquete[] =
+      prev.componentesPaquete || [];
+
+    const existente = actuales.find(
+      (comp: ComponentePaquete) =>
+        comp.productoId === producto.id
+    );
+
+    let nuevos: ComponentePaquete[];
+
+    if (existente) {
+      nuevos = actuales.map((comp: ComponentePaquete) =>
+        comp.productoId === producto.id
+          ? {
+              ...comp,
+              cantidad:
+                Math.max(1, Number(comp.cantidad || 1)) + 1
+            }
+          : comp
+      );
+    } else {
+      nuevos = [
+        ...actuales,
+        {
+          productoId: producto.id,
+          sku: producto.codigo,
+          nombre: producto.nombre,
+          precioLista: producto.precio,
+          numeroSerie: 'N/A',
+          cantidad: 1
+        }
+      ];
+    }
+
+    return {
+      ...prev,
+      componentesPaquete: nuevos
+    };
+  });
+
+  setBusquedaComponentePaquete('');
+};
+
+const cambiarCantidadComponentePaqueteEdicion = (
+  index: number,
+  nuevaCantidad: number
+) => {
+  const cantidadSegura = Math.max(
+    1,
+    Math.floor(Number(nuevaCantidad) || 1)
+  );
+
+  setProductoSeleccionadoEdicion((prev) => {
+    if (!prev) return prev;
+
+    const actuales: ComponentePaquete[] =
+      prev.componentesPaquete || [];
+
+    return {
+      ...prev,
+      componentesPaquete: actuales.map(
+        (comp: ComponentePaquete, i: number) =>
+          i === index
+            ? { ...comp, cantidad: cantidadSegura }
+            : comp
+      )
+    };
+  });
+};
+
+const quitarComponentePaqueteEdicion = (index: number) => {
+  setProductoSeleccionadoEdicion((prev) => {
+    if (!prev) return prev;
+
+    return {
+      ...prev,
+      componentesPaquete: (
+        prev.componentesPaquete || []
+      ).filter((_, i: number) => i !== index)
+    };
+  });
+};
 
   const guardarCliente = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2662,9 +3017,38 @@ activo: (perfil as any).active !== false
     setPProductosAsociados(pProductosAsociados.filter((_, i) => i !== index));
   };
 
-  const normalizarTextoCatalogo = (valor: string) =>
-    valor.trim().toLocaleLowerCase('es-MX').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
+ const normalizarTextoCatalogo = (valor: string) =>
+  valor
+    .trim()
+    .toLocaleLowerCase('es-MX')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ');
 
+const terminoBusquedaComponentePaquete =
+  normalizarTextoCatalogo(busquedaComponentePaquete);
+
+const productosEncontradosParaPaquete =
+  terminoBusquedaComponentePaquete.length >= 2
+    ? catalogoProductos
+        .filter((producto: ProductoCatalogo) => {
+          if (producto.esPaqueteDefinido) return false;
+          if (producto.estatus !== 'Activo') return false;
+
+          const nombre = normalizarTextoCatalogo(producto.nombre);
+          const sku = normalizarTextoCatalogo(producto.codigo);
+          const clave = normalizarTextoCatalogo(
+            producto.claveInterna
+          );
+
+          return (
+            nombre.includes(terminoBusquedaComponentePaquete) ||
+            sku.includes(terminoBusquedaComponentePaquete) ||
+            clave.includes(terminoBusquedaComponentePaquete)
+          );
+        })
+        .slice(0, 12)
+    : [];
   const validarDuplicadoProducto = (codigo: string, nombre: string, excluirId?: number) => {
     const codigoNormalizado = codigo.trim().toUpperCase();
     const nombreNormalizado = normalizarTextoCatalogo(nombre);
@@ -2942,7 +3326,10 @@ activo: (perfil as any).active !== false
 );
 
     if (prod) {
-      const stockDisp = obtenerStockSucursal(prod.id, sucursalActivaPOS);
+      const stockDisp = obtenerDisponibilidadProductoVenta(
+  prod,
+  sucursalActivaPOS
+);
       if (stockDisp <= 0 && !prod.esRegalo) {
         setMensajeSinStock(`El producto "${prod.nombre}" no cuenta con stock disponible en la sucursal ${sucursalActivaPOS}.`);
         setModalSinStockAbierto(true);
@@ -3061,12 +3448,27 @@ if (!puedeVerCategoria(producto.categoria)) {
     }
     setVentaExitosa(false);
     setCarrito((prev: ItemVenta[]) => {
-      const unidadesYaEnCarrito = prev
-        .filter((item: ItemVenta) => item.id === producto.id && !item.esPaqueteComponente && item.sucursal === sucursalActivaPOS)
-        .reduce((acc: number, item: ItemVenta) => acc + item.cantidadVendida, 0);
+      const unidadesFisicasYaComprometidas =
+  cantidadFisicaComprometidaEnCarrito(
+    prev,
+    producto.id,
+    sucursalActivaPOS
+  );
 
-      if (!esRegalo && unidadesYaEnCarrito >= stockDisp) return prev;
+if (
+  unidadesFisicasYaComprometidas >= stockDisp
+) {
+  setMensajeSinStock(
+    `No es posible agregar "${producto.nombre}". ` +
+    `Las ${stockDisp} unidad(es) disponible(s) en ${sucursalActivaPOS} ` +
+    `ya están comprometidas en el carrito, ya sea como venta individual ` +
+    `o como componente de un paquete.`
+  );
 
+  setModalSinStockAbierto(true);
+
+  return prev;
+}
       // Los artículos serializados deben permanecer en líneas independientes, una serie por unidad.
       if (!producto.manejaSerie) {
         const existe = prev.find((item: ItemVenta) =>
@@ -3111,69 +3513,294 @@ if (!puedeVerCategoria(producto.categoria)) {
     });
   };
 
-  const agregarPaqueteAlCarrito = (paquete: ProductoCatalogo, stockDisp: number) => {
-    if (cotizacionOrigenPOS) {
-      setMensajeNotif('No puede agregar paquetes a una cotización ya emitida. Genere una nueva cotización si requiere cambios.');
-      setModalNotifAbierto(true);
-      return;
-    }
-    if (stockDisp <= 0) {
-      setMensajeSinStock(`El paquete "${paquete.nombre}" no cuenta con stock disponible en la sucursal ${sucursalActivaPOS}.`);
-      setModalSinStockAbierto(true);
-      return;
-    }
+  const agregarPaqueteAlCarrito = (
+  paquete: ProductoCatalogo,
+  stockDisp: number
+) => {
+  if (cotizacionOrigenPOS) {
+    setMensajeNotif(
+      'No puede agregar paquetes a una cotización ya emitida. Genere una nueva cotización si requiere cambios.'
+    );
+    setModalNotifAbierto(true);
+    return;
+  }
 
-    setVentaExitosa(false);
-    if (!paquete.componentesPaquete) return;
+  if (stockDisp <= 0) {
+    setMensajeSinStock(
+      `El paquete "${paquete.nombre}" no cuenta con componentes suficientes en la sucursal ${sucursalActivaPOS}.`
+    );
+    setModalSinStockAbierto(true);
+    return;
+  }
 
-    const paquetesYaEnCarrito = carrito
-      .filter((it: ItemVenta) => it.nombrePaqueteOrigen === paquete.nombre && it.sucursal === sucursalActivaPOS)
-      .length > 0
-      ? 1
-      : 0;
-    if (paquetesYaEnCarrito >= stockDisp) {
-      setMensajeSinStock(`No hay más existencias disponibles del paquete "${paquete.nombre}" en ${sucursalActivaPOS}.`);
-      setModalSinStockAbierto(true);
-      return;
+  setVentaExitosa(false);
+
+  const componentes = paquete.componentesPaquete || [];
+
+  if (componentes.length === 0) {
+    setMensajeNotif(
+      `El paquete "${paquete.nombre}" no tiene componentes registrados.`
+    );
+    setModalNotifAbierto(true);
+    return;
+  }
+
+  // Contamos cuántos paquetes completos del mismo tipo
+  // ya fueron agregados al carrito.
+  const instanciasRegistradas = new Set(
+    carrito
+      .filter(
+        (it: ItemVenta) =>
+          it.esPaqueteComponente &&
+          it.nombrePaqueteOrigen === paquete.nombre &&
+          it.sucursal === sucursalActivaPOS &&
+          Boolean(it.paqueteInstanciaId)
+      )
+      .map((it: ItemVenta) => it.paqueteInstanciaId as string)
+  ).size;
+
+  // Compatibilidad por si durante Hot Reload quedó
+  // algún paquete agregado con el formato anterior.
+  const existePaqueteAnteriorSinInstancia = carrito.some(
+    (it: ItemVenta) =>
+      it.esPaqueteComponente &&
+      it.nombrePaqueteOrigen === paquete.nombre &&
+      it.sucursal === sucursalActivaPOS &&
+      !it.paqueteInstanciaId
+  );
+
+  const paquetesYaEnCarrito =
+    instanciasRegistradas +
+    (existePaqueteAnteriorSinInstancia ? 1 : 0);
+
+  if (paquetesYaEnCarrito >= stockDisp) {
+    setMensajeSinStock(
+      `No hay más existencias disponibles del paquete "${paquete.nombre}" en ${sucursalActivaPOS}.`
+    );
+    setModalSinStockAbierto(true);
+    return;
+  }
+
+  // Validamos que todos los productos que componen
+  // el paquete todavía existan en el catálogo.
+  const componentesFaltantes = componentes.filter(
+    (comp: ComponentePaquete) =>
+      !catalogoProductos.some(
+        (p: ProductoCatalogo) =>
+          p.id === comp.productoId
+      )
+  );
+
+  if (componentesFaltantes.length > 0) {
+    setMensajeNotif(
+      `El paquete "${paquete.nombre}" contiene productos que ya no existen en el catálogo. Revise la ficha del paquete antes de venderlo.`
+    );
+    setModalNotifAbierto(true);
+    return;
+  }
+
+  /*
+    Convertimos la definición del paquete en unidades físicas.
+
+    Ejemplo:
+    Banco, cantidad 2
+
+    se convierte internamente en:
+    Banco unidad 1
+    Banco unidad 2
+
+    Esto es indispensable para manejar una serie diferente
+    para cada aparato físico.
+  */
+  const unidadesPaquete = componentes.flatMap(
+    (comp: ComponentePaquete, compIndex: number) => {
+      const cantidad = Math.max(
+        1,
+        Math.floor(Number(comp.cantidad || 1))
+      );
+
+      const productoComponente =
+        catalogoProductos.find(
+          (p: ProductoCatalogo) =>
+            p.id === comp.productoId
+        )!;
+
+      return Array.from(
+        { length: cantidad },
+        (_, unidadIndex: number) => ({
+          comp,
+          compIndex,
+          unidadIndex,
+          productoComponente
+        })
+      );
     }
-    
-    const sumaLista = paquete.componentesPaquete.reduce((acc, c) => acc + (c.precioLista || 0), 0);
-    const factorProporcional = sumaLista > 0 ? (paquete.precio || 0) / sumaLista : 1;
+  );
 
-    setCarrito((prev: ItemVenta[]) => {
-      const nuevoCarrito = [...prev];
-      paquete.componentesPaquete!.forEach((comp, compIndex) => {
-        const precioProporcional = (comp.precioLista || 0) * factorProporcional;
-        const prodComponente = catalogoProductos.find((p: ProductoCatalogo) => p.id === comp.productoId);
-        const requiereSerie = Boolean(prodComponente?.manejaSerie);
-        
-        nuevoCarrito.push({
-          id: paquete.id * 100 + comp.productoId,
-          lineaId: `paq-${paquete.id}-${comp.productoId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          productoIdCatalogo: comp.productoId,
-          codigo: prodComponente?.codigo || `${paquete.codigo}-${comp.productoId}`,
-          nombre: comp.nombre,
-          categoria: 'Paquetes / Combos',
-          precio: precioProporcional,
-          costo: prodComponente?.costoPromedio || prodComponente?.precioCompra || precioProporcional * 0.6,
-          stock: stockDisp,
-          sucursal: sucursalActivaPOS,
-          requiereSerie,
-          numeroSerie: requiereSerie ? '' : 'N/A',
-          cantidadVendida: 1,
-          esRegalo: false,
-          esPaqueteComponente: true,
-          nombrePaqueteOrigen: paquete.nombre,
-          precioListaOriginal: comp.precioLista,
-          descuentoMontoFijo: 0.00,
-          fechaGarantia: prodComponente ? calcularFechaGarantiaProducto(prodComponente) : 'Sin garantía',
-          productoInventarioId: paquete.id,
-          cantidadInventario: compIndex === 0 ? 1 : 0
-        });
-      });
-      return nuevoCarrito;
-    });
-  };
+  // Calculamos el precio proporcional de cada pieza
+  // para que la suma final sea exactamente el precio
+  // comercial del paquete.
+  const precioPaquete = Math.max(
+    0,
+    Number(paquete.precio || 0)
+  );
+
+  const sumaLista = unidadesPaquete.reduce(
+    (acc: number, unidad) =>
+      acc +
+      Math.max(
+        0,
+        Number(unidad.comp.precioLista || 0)
+      ),
+    0
+  );
+
+  const preciosAsignados = unidadesPaquete.map(
+    (unidad) => {
+      const precioLista = Math.max(
+        0,
+        Number(unidad.comp.precioLista || 0)
+      );
+
+      const valor =
+        sumaLista > 0
+          ? precioPaquete *
+            (precioLista / sumaLista)
+          : precioPaquete /
+            Math.max(1, unidadesPaquete.length);
+
+      return Math.round(valor * 100) / 100;
+    }
+  );
+
+  // Ajuste de centavos para garantizar que todas
+  // las líneas sumen exactamente el precio del paquete.
+  if (preciosAsignados.length > 0) {
+    const sumaAsignada = preciosAsignados.reduce(
+      (acc: number, valor: number) =>
+        acc + valor,
+      0
+    );
+
+    const diferencia =
+      Math.round(
+        (precioPaquete - sumaAsignada) * 100
+      ) / 100;
+
+    preciosAsignados[
+      preciosAsignados.length - 1
+    ] =
+      Math.round(
+        (
+          preciosAsignados[
+            preciosAsignados.length - 1
+          ] + diferencia
+        ) * 100
+      ) / 100;
+  }
+
+  const paqueteInstanciaId =
+    `PAQ-${paquete.id}-${Date.now()}-` +
+    Math.random().toString(36).slice(2, 8);
+
+  setCarrito((prev: ItemVenta[]) => {
+    const nuevasLineas: ItemVenta[] =
+      unidadesPaquete.map(
+        (unidad, index: number) => {
+          const prodComponente =
+            unidad.productoComponente;
+
+          const requiereSerie =
+            Boolean(prodComponente.manejaSerie);
+
+          const stockComponente =
+            obtenerStockSucursal(
+              prodComponente.id,
+              sucursalActivaPOS
+            );
+
+          return {
+            id: prodComponente.id,
+
+            lineaId:
+              `${paqueteInstanciaId}-` +
+              `${prodComponente.id}-` +
+              `${unidad.unidadIndex}-${index}`,
+
+            productoIdCatalogo:
+              prodComponente.id,
+
+            codigo:
+              prodComponente.codigo,
+
+            nombre:
+              prodComponente.nombre,
+
+            categoria:
+              'Paquetes / Combos',
+
+            precio:
+              preciosAsignados[index],
+
+            costo:
+              prodComponente.costoPromedio ||
+              prodComponente.precioCompra ||
+              0,
+
+            stock:
+              stockComponente,
+
+            sucursal:
+              sucursalActivaPOS,
+
+            requiereSerie,
+
+            numeroSerie:
+              requiereSerie ? '' : 'N/A',
+
+            // Cada renglón representa una unidad física.
+            cantidadVendida: 1,
+
+            esRegalo: false,
+
+            esPaqueteComponente: true,
+
+            nombrePaqueteOrigen:
+              paquete.nombre,
+
+            paqueteInstanciaId,
+
+            precioListaOriginal:
+              Number(
+                unidad.comp.precioLista || 0
+              ),
+
+            descuentoMontoFijo: 0,
+
+            fechaGarantia:
+              calcularFechaGarantiaProducto(
+                prodComponente
+              ),
+
+            // ESTE ES EL CAMBIO PRINCIPAL:
+            // el inventario afectado será el aparato,
+            // NO el producto "paquete".
+            productoInventarioId:
+              prodComponente.id,
+
+            cantidadInventario: 1
+          };
+        }
+      );
+
+    const carritoActualizado = [
+  ...prev,
+  ...nuevasLineas
+];
+
+return carritoActualizado;
+  });
+};
 
   const cambiarCantidad = (lineaId: string, delta: number) => {
     if (cotizacionOrigenPOS) {
@@ -3185,7 +3812,12 @@ if (!puedeVerCategoria(producto.categoria)) {
       prev
         .map((item: ItemVenta) => {
           if (item.lineaId !== lineaId) return item;
-          if (item.requiereSerie) return item;
+          if (
+  item.requiereSerie ||
+  item.esPaqueteComponente
+) {
+  return item;
+}
 
           const nueva = item.cantidadVendida + delta;
           if (nueva > item.stock && !item.esRegalo) return item;
@@ -3195,14 +3827,47 @@ if (!puedeVerCategoria(producto.categoria)) {
     );
   };
 
-  const quitarLineaCarrito = (lineaId: string) => {
-    if (cotizacionOrigenPOS) {
-      setMensajeNotif('No puede quitar líneas de una cotización ya emitida. Si requiere cambios, genere una nueva cotización.');
-      setModalNotifAbierto(true);
-      return;
+  const quitarLineaCarrito = (
+  lineaId: string
+) => {
+  if (cotizacionOrigenPOS) {
+    setMensajeNotif(
+      'No puede quitar líneas de una cotización ya emitida. Si requiere cambios, genere una nueva cotización.'
+    );
+    setModalNotifAbierto(true);
+    return;
+  }
+
+  setCarrito((prev: ItemVenta[]) => {
+    const lineaObjetivo = prev.find(
+      (item: ItemVenta) =>
+        item.lineaId === lineaId
+    );
+
+    if (!lineaObjetivo) {
+      return prev;
     }
-    setCarrito((prev: ItemVenta[]) => prev.filter((item: ItemVenta) => item.lineaId !== lineaId));
-  };
+
+    // Si pertenece a un paquete, se quita
+    // el paquete COMPLETO.
+    if (
+      lineaObjetivo.esPaqueteComponente &&
+      lineaObjetivo.paqueteInstanciaId
+    ) {
+      return prev.filter(
+        (item: ItemVenta) =>
+          item.paqueteInstanciaId !==
+          lineaObjetivo.paqueteInstanciaId
+      );
+    }
+
+    // Producto normal.
+    return prev.filter(
+      (item: ItemVenta) =>
+        item.lineaId !== lineaId
+    );
+  });
+};
 
   const cambiarDescuentoMonto = (lineaId: string, valorTexto: string) => {
     if (cotizacionOrigenPOS) {
@@ -3368,12 +4033,14 @@ const productosFiltrados = catalogoProductos.filter(
     const clienteObj = clientes.find((c: Cliente) => c.nombreComercial === clienteSeleccionadoPOS) || null;
 
     try {
+    const itemsDb = construirItemsOperacionDb(carrito);
+     
       const { data, error } = await supabase.rpc('quote_create', {
         p_folio: folio,
         p_customer_id: clienteObj?.id || null,
         p_customer_name: clienteSeleccionadoPOS || 'Público General',
         p_branch_id: branchId,
-        p_items: construirItemsOperacionDb(carrito),
+        p_items: itemsDb,
         p_expires_at: expiracionDate.toISOString()
       });
       if (error) throw error;
@@ -3932,6 +4599,40 @@ const resultadoDespuesGastosPeriodo =
         };
       })
   );
+const totalPaginasDetalleReporte = Math.max(
+  1,
+  Math.ceil(
+    detalleVentasReporte.length /
+      DETALLE_REPORTE_POR_PAGINA
+  )
+);
+
+const paginaDetalleReporteSegura = Math.min(
+  paginaDetalleReporte,
+  totalPaginasDetalleReporte
+);
+
+const indiceInicioDetalleReporte =
+  (paginaDetalleReporteSegura - 1) *
+  DETALLE_REPORTE_POR_PAGINA;
+
+const indiceFinDetalleReporte =
+  indiceInicioDetalleReporte +
+  DETALLE_REPORTE_POR_PAGINA;
+
+const detalleVentasReportePaginado =
+  detalleVentasReporte.slice(
+    indiceInicioDetalleReporte,
+    indiceFinDetalleReporte
+  );
+  useEffect(() => {
+  setPaginaDetalleReporte(1);
+}, [
+  fechaInicioReporte,
+  fechaFinReporte,
+  sucursalReporte,
+  categoriaReporte
+]);
 
   const inventarioReporte = inventarioSucursales
     .filter((stock: StockSucursal) => {
@@ -4437,6 +5138,9 @@ const registrarNuevoRolSistema = async (e: React.FormEvent) => {
 // BUSCADORES DE PRODUCTOS E INVENTARIO
 // ============================================================
 
+// PAGINACIÓN DEL CATÁLOGO DE PRODUCTOS
+const PRODUCTOS_POR_PAGINA = 20;
+const [paginaProductos, setPaginaProductos] = useState(1);
 const terminoBusquedaProductos = busquedaProductosCatalogo
   .trim()
   .toLowerCase();
@@ -4452,7 +5156,31 @@ const productosCatalogoFiltrados = catalogoProductos.filter(
     );
   }
 );
+const totalPaginasProductos = Math.max(
+  1,
+  Math.ceil(productosCatalogoFiltrados.length / PRODUCTOS_POR_PAGINA)
+);
 
+const paginaProductosSegura = Math.min(
+  paginaProductos,
+  totalPaginasProductos
+);
+
+const indiceInicioProductos =
+  (paginaProductosSegura - 1) * PRODUCTOS_POR_PAGINA;
+
+const indiceFinProductos =
+  indiceInicioProductos + PRODUCTOS_POR_PAGINA;
+
+const productosCatalogoPaginados =
+  productosCatalogoFiltrados.slice(
+    indiceInicioProductos,
+    indiceFinProductos
+  );
+
+// PAGINACIÓN DEL INVENTARIO
+const INVENTARIO_POR_PAGINA = 20;
+const [paginaInventario, setPaginaInventario] = useState(1);
 const terminoBusquedaInventario = busquedaInventarioLista
   .trim()
   .toLowerCase();
@@ -4464,6 +5192,26 @@ const inventarioFiltradoUsuario = inventarioVisibleUsuario.filter(
     const producto = catalogoProductos.find(
       (p: ProductoCatalogo) => p.id === inventario.productoId
     );
+    const totalPaginasInventario = Math.max(
+  1,
+  Math.ceil(inventarioFiltradoUsuario.length / INVENTARIO_POR_PAGINA)
+);
+
+const paginaInventarioSegura = Math.min(
+  paginaInventario,
+  totalPaginasInventario
+);
+
+const indiceInicioInventario =
+  (paginaInventarioSegura - 1) * INVENTARIO_POR_PAGINA;
+
+const indiceFinInventario =
+  indiceInicioInventario + INVENTARIO_POR_PAGINA;
+
+const inventarioPaginado = inventarioFiltradoUsuario.slice(
+  indiceInicioInventario,
+  indiceFinInventario
+);
 
     if (!producto) return false;
 
@@ -4473,6 +5221,26 @@ const inventarioFiltradoUsuario = inventarioVisibleUsuario.filter(
       producto.claveInterna.toLowerCase().includes(terminoBusquedaInventario)
     );
   }
+);
+const totalPaginasInventario = Math.max(
+  1,
+  Math.ceil(inventarioFiltradoUsuario.length / INVENTARIO_POR_PAGINA)
+);
+
+const paginaInventarioSegura = Math.min(
+  paginaInventario,
+  totalPaginasInventario
+);
+
+const indiceInicioInventario =
+  (paginaInventarioSegura - 1) * INVENTARIO_POR_PAGINA;
+
+const indiceFinInventario =
+  indiceInicioInventario + INVENTARIO_POR_PAGINA;
+
+const inventarioPaginado = inventarioFiltradoUsuario.slice(
+  indiceInicioInventario,
+  indiceFinInventario
 );
 
   const { subtotalBruto, descuentoTotal, subtotalNeto, iva, total } = calcularTotal();
@@ -5392,36 +6160,185 @@ const inventarioFiltradoUsuario = inventarioVisibleUsuario.filter(
                         </label>
                       </div>
 
-                      {fEsPaquete && (
-                        <div className="md:col-span-3 bg-blue-950/40 border border-blue-800/80 p-4 rounded-xl space-y-3">
-                          <span className="text-blue-300 font-bold block">📦 Seleccionar Productos Distintos para integrar al Paquete:</span>
-                          <div className="flex gap-2">
-                            <select
-                              value={idProdParaPaquete}
-                              onChange={(e) => setIdProdParaPaquete(e.target.value)}
-                              className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs"
-                            >
-                              <option value="">-- Seleccionar producto del catálogo --</option>
-                              {catalogoProductos.filter((p: ProductoCatalogo) => !p.esPaqueteDefinido).map((p: ProductoCatalogo) => (
-                                <option key={p.id} value={p.id}>{p.nombre} (Lista: ${p.precio.toLocaleString()} MXN)</option>
-                              ))}
-                            </select>
-                            <button type="button" onClick={agregarComponenteAPaquete} className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer">+ Agregar</button>
-                          </div>
+{fEsPaquete && (
+  <div className="md:col-span-3 bg-blue-950/40 border border-blue-800/80 p-4 rounded-xl space-y-3">
 
-                          <div className="space-y-1.5 max-h-32 overflow-y-auto">
-                            {componentesSeleccionadosPaquete.map((comp: { productoId: number; nombre: string; precioLista: number; numeroSerie: string }, idx: number) => (
-                              <div key={idx} className="flex justify-between items-center bg-slate-950 p-2 rounded-lg border border-slate-800 text-xs">
-                                <span className="text-white">🔹 {comp.nombre} (Valor lista: ${comp.precioLista.toFixed(2)} MXN)</span>
-                                <button type="button" onClick={() => quitarComponentePaquete(idx)} className="text-red-400 font-bold text-xs px-2 py-0.5 bg-red-950 rounded cursor-pointer">✕ Quitar</button>
-                              </div>
-                            ))}
-                            {componentesSeleccionadosPaquete.length === 0 && (
-                              <p className="text-[11px] text-slate-400 italic">No hay productos agregados al paquete todavía.</p>
-                            )}
-                          </div>
-                        </div>
+    <span className="text-blue-300 font-bold block">
+      📦 Seleccionar Productos Distintos para integrar al Paquete:
+    </span>
+
+    {/* BUSCADOR DE COMPONENTES POR SKU O NOMBRE */}
+    <div className="space-y-2">
+      <div className="relative">
+        <input
+          type="text"
+          value={busquedaComponentePaquete}
+          onChange={(e) =>
+            setBusquedaComponentePaquete(e.target.value)
+          }
+          placeholder="🔎 Buscar por SKU o nombre del producto..."
+          className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-white text-xs"
+        />
+      </div>
+
+      {busquedaComponentePaquete.trim().length > 0 &&
+        busquedaComponentePaquete.trim().length < 2 && (
+          <p className="text-[10px] text-slate-400">
+            Escriba al menos 2 caracteres para buscar.
+          </p>
+        )}
+
+      {productosEncontradosParaPaquete.length > 0 && (
+        <div className="bg-slate-950 border border-slate-700 rounded-xl overflow-hidden max-h-64 overflow-y-auto">
+
+          {productosEncontradosParaPaquete.map(
+            (producto: ProductoCatalogo) => {
+
+              const yaAgregado =
+                componentesSeleccionadosPaquete.some(
+                  (comp: ComponentePaquete) =>
+                    comp.productoId === producto.id
+                );
+
+              return (
+                <button
+                  key={producto.id}
+                  type="button"
+                  onClick={() =>
+                    agregarComponenteAPaquete(producto.id)
+                  }
+                  className="w-full flex items-center justify-between gap-4 px-4 py-3 text-left border-b border-slate-800 last:border-b-0 hover:bg-blue-950/40 cursor-pointer"
+                >
+                  <div className="min-w-0">
+
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-blue-400 text-xs">
+                        {producto.codigo}
+                      </span>
+
+                      {yaAgregado && (
+                        <span className="text-[9px] bg-emerald-950 text-emerald-400 border border-emerald-800 rounded px-1.5 py-0.5">
+                          Ya agregado
+                        </span>
                       )}
+                    </div>
+
+                    <div className="text-white text-xs font-semibold truncate">
+                      {producto.nombre}
+                    </div>
+
+                    <div className="text-[10px] text-slate-500">
+                      Precio lista:{' '}
+                      {formatearMoneda(producto.precio)}
+                    </div>
+                  </div>
+
+                  <span className="shrink-0 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-bold">
+                    {yaAgregado
+                      ? '+ 1 unidad'
+                      : '+ Agregar'}
+                  </span>
+                </button>
+              );
+            }
+          )}
+
+        </div>
+      )}
+
+      {busquedaComponentePaquete.trim().length >= 2 &&
+        productosEncontradosParaPaquete.length === 0 && (
+          <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 text-center text-[11px] text-slate-500">
+            No se encontraron productos con ese SKU o nombre.
+          </div>
+        )}
+    </div>
+
+    {/* COMPONENTES YA AGREGADOS */}
+    <div className="space-y-2 max-h-72 overflow-y-auto">
+
+      {componentesSeleccionadosPaquete.map(
+        (comp: ComponentePaquete, idx: number) => (
+          <div
+            key={`${comp.productoId}-${idx}`}
+            className="bg-slate-950 p-3 rounded-xl border border-slate-800"
+          >
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+
+              <div className="min-w-0 flex-1">
+
+                <div className="font-mono text-[10px] text-blue-400">
+                  {comp.sku ||
+                    catalogoProductos.find(
+                      (p: ProductoCatalogo) =>
+                        p.id === comp.productoId
+                    )?.codigo ||
+                    'SIN-SKU'}
+                </div>
+
+                <div className="text-white text-xs font-semibold">
+                  {comp.nombre}
+                </div>
+
+                <div className="text-[10px] text-slate-500">
+                  Valor lista unitario:{' '}
+                  {formatearMoneda(comp.precioLista)}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+
+                <label className="text-[10px] text-slate-400">
+                  Cantidad:
+                </label>
+
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={comp.cantidad}
+                  onChange={(e) =>
+                    cambiarCantidadComponentePaquete(
+                      idx,
+                      Number(e.target.value)
+                    )
+                  }
+                  className="w-20 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-center text-white font-bold"
+                />
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    quitarComponentePaquete(idx)
+                  }
+                  className="text-red-400 font-bold text-xs px-3 py-1.5 bg-red-950 border border-red-900 rounded-lg cursor-pointer"
+                >
+                  ✕ Quitar
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-2 text-[10px] text-emerald-400">
+              Total lista componente:{' '}
+              {formatearMoneda(
+                comp.precioLista *
+                  Math.max(1, comp.cantidad)
+              )}
+            </div>
+          </div>
+        )
+      )}
+
+      {componentesSeleccionadosPaquete.length === 0 && (
+        <p className="text-[11px] text-slate-400 italic">
+          Busque por SKU o nombre y agregue los productos que
+          integran el paquete.
+        </p>
+      )}
+
+    </div>
+  </div>
+)}
 
                       <div>
                         <label className="block text-slate-400 mb-1">12. Precio de compra</label>
@@ -5552,6 +6469,188 @@ const inventarioFiltradoUsuario = inventarioVisibleUsuario.filter(
                         <input type="text" value={productoSeleccionadoEdicion.garantia} onChange={(e) => setProductoSeleccionadoEdicion({...productoSeleccionadoEdicion, garantia: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-2 py-2 text-white" />
                       </div>
 
+{productoSeleccionadoEdicion.esPaqueteDefinido && (
+  <div className="md:col-span-3 bg-blue-950/40 border border-blue-800/80 p-4 rounded-xl space-y-4">
+
+    <div>
+      <h4 className="text-blue-300 font-bold text-sm">
+        📦 Productos que integran este paquete
+      </h4>
+
+      <p className="text-[10px] text-slate-400 mt-1">
+        Puede agregar, quitar o modificar la cantidad de cada
+        artículo que compone el paquete.
+      </p>
+    </div>
+
+    {/* BUSCADOR PARA AGREGAR NUEVOS COMPONENTES */}
+    <div className="space-y-2">
+      <input
+        type="text"
+        value={busquedaComponentePaquete}
+        onChange={(e) =>
+          setBusquedaComponentePaquete(e.target.value)
+        }
+        placeholder="🔎 Buscar otro componente por SKU o nombre..."
+        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-white text-xs"
+      />
+
+      {productosEncontradosParaPaquete.length > 0 && (
+        <div className="bg-slate-950 border border-slate-700 rounded-xl overflow-hidden max-h-52 overflow-y-auto">
+
+          {productosEncontradosParaPaquete.map(
+            (producto: ProductoCatalogo) => (
+              <button
+                key={producto.id}
+                type="button"
+                onClick={() =>
+                  agregarComponentePaqueteEdicion(
+                    producto.id
+                  )
+                }
+                className="w-full flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-800 last:border-b-0 hover:bg-blue-950/40 text-left cursor-pointer"
+              >
+                <div>
+                  <div className="font-mono text-blue-400 text-[10px]">
+                    {producto.codigo}
+                  </div>
+
+                  <div className="text-white text-xs font-semibold">
+                    {producto.nombre}
+                  </div>
+                </div>
+
+                <span className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-bold">
+                  + Agregar
+                </span>
+              </button>
+            )
+          )}
+
+        </div>
+      )}
+    </div>
+
+    {/* COMPONENTES ACTUALES DEL PAQUETE */}
+    <div className="space-y-2">
+
+      {(productoSeleccionadoEdicion.componentesPaquete || [])
+        .map(
+          (comp: ComponentePaquete, idx: number) => {
+
+            const productoReferencia =
+              catalogoProductos.find(
+                (p: ProductoCatalogo) =>
+                  p.id === comp.productoId
+              );
+
+            return (
+              <div
+                key={`${comp.productoId}-${idx}`}
+                className="bg-slate-950 border border-slate-800 rounded-xl p-3"
+              >
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+
+                  <div className="flex-1 min-w-0">
+
+                    <div className="font-mono text-[10px] text-blue-400">
+                      {comp.sku ||
+                        productoReferencia?.codigo ||
+                        'SIN-SKU'}
+                    </div>
+
+                    <div className="text-white text-xs font-semibold">
+                      {comp.nombre ||
+                        productoReferencia?.nombre ||
+                        'Producto'}
+                    </div>
+
+                    <div className="text-[10px] text-slate-500">
+                      Precio lista unitario:{' '}
+                      {formatearMoneda(
+                        Number(
+                          comp.precioLista ||
+                            productoReferencia?.precio ||
+                            0
+                        )
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+
+                    <span className="text-[10px] text-slate-400">
+                      Cantidad:
+                    </span>
+
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={Math.max(
+                        1,
+                        Number(comp.cantidad || 1)
+                      )}
+                      onChange={(e) =>
+                        cambiarCantidadComponentePaqueteEdicion(
+                          idx,
+                          Number(e.target.value)
+                        )
+                      }
+                      className="w-20 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-white text-center font-bold"
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        quitarComponentePaqueteEdicion(idx)
+                      }
+                      className="bg-red-950 border border-red-900 text-red-400 px-3 py-1.5 rounded-lg text-[10px] font-bold cursor-pointer"
+                    >
+                      ✕ Quitar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+        )}
+
+      {(productoSeleccionadoEdicion.componentesPaquete || [])
+        .length === 0 && (
+        <div className="bg-amber-950/30 border border-amber-800 rounded-xl p-3 text-amber-300 text-xs">
+          Este paquete no tiene componentes registrados.
+        </div>
+      )}
+
+    </div>
+
+    {/* RESUMEN */}
+    <div className="bg-slate-900 border border-slate-700 rounded-xl p-3 flex justify-between items-center">
+
+      <span className="text-slate-300 text-xs">
+        Total de piezas que integran el paquete:
+      </span>
+
+      <strong className="text-emerald-400 text-lg">
+        {(productoSeleccionadoEdicion.componentesPaquete || [])
+          .reduce(
+            (
+              total: number,
+              comp: ComponentePaquete
+            ) =>
+              total +
+              Math.max(
+                1,
+                Number(comp.cantidad || 1)
+              ),
+            0
+          )}
+      </strong>
+    </div>
+
+  </div>
+)}
                       <div className="md:col-span-3 flex justify-end gap-3 pt-4 border-t border-slate-800">
                         <button type="button" onClick={() => setProductoSeleccionadoEdicion(null)} className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl">Cancelar</button>
                         <button type="submit" className="bg-purple-600 hover:bg-purple-500 text-white font-bold px-6 py-2 rounded-xl shadow cursor-pointer">Actualizar 30 Parámetros</button>
@@ -5572,7 +6671,10 @@ const inventarioFiltradoUsuario = inventarioVisibleUsuario.filter(
       <input
         type="text"
         value={busquedaProductosCatalogo}
-        onChange={(e) => setBusquedaProductosCatalogo(e.target.value)}
+        onChange={(e) => {
+  setBusquedaProductosCatalogo(e.target.value);
+  setPaginaProductos(1);
+}}
         placeholder="Buscar producto por nombre, SKU o clave..."
         className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-11 pr-4 py-3 text-sm text-white focus:border-blue-500 outline-none"
       />
@@ -5591,6 +6693,51 @@ const inventarioFiltradoUsuario = inventarioVisibleUsuario.filter(
 
   <p className="text-[10px] text-slate-500 mt-2">
     Mostrando {productosCatalogoFiltrados.length} de {catalogoProductos.length} productos
+<div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+  <div className="text-xs text-slate-400">
+    Mostrando{" "}
+    {productosCatalogoFiltrados.length === 0
+      ? 0
+      : indiceInicioProductos + 1}
+    {" - "}
+    {Math.min(
+      indiceFinProductos,
+      productosCatalogoFiltrados.length
+    )}
+    {" de "}
+    {productosCatalogoFiltrados.length} producto(s)
+  </div>
+
+  <div className="flex items-center gap-2">
+    <button
+      type="button"
+      onClick={() =>
+        setPaginaProductos((pagina) => Math.max(1, pagina - 1))
+      }
+      disabled={paginaProductosSegura <= 1}
+      className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      ← Anterior
+    </button>
+
+    <span className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200">
+      Página {paginaProductosSegura} de {totalPaginasProductos}
+    </span>
+
+    <button
+      type="button"
+      onClick={() =>
+        setPaginaProductos((pagina) =>
+          Math.min(totalPaginasProductos, pagina + 1)
+        )
+      }
+      disabled={paginaProductosSegura >= totalPaginasProductos}
+      className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      Siguiente →
+    </button>
+  </div>
+</div>
   </p>
 </div>
               {/* Listado de Productos */}
@@ -5614,7 +6761,7 @@ const inventarioFiltradoUsuario = inventarioVisibleUsuario.filter(
                           </td>
                         </tr>
                       )}
-                      {productosCatalogoFiltrados.map((prod: ProductoCatalogo) => (
+                      {productosCatalogoPaginados.map((prod: ProductoCatalogo) => (
                         <tr key={prod.id} className="hover:bg-slate-800/40">
                           <td className="p-4 font-mono text-blue-400 text-xs">{prod.codigo}</td>
                           <td className="p-4 font-medium text-white text-xs">
@@ -5890,7 +7037,10 @@ const inventarioFiltradoUsuario = inventarioVisibleUsuario.filter(
     <input
       type="text"
       value={busquedaInventarioLista}
-      onChange={(e) => setBusquedaInventarioLista(e.target.value)}
+      onChange={(e) => {
+  setBusquedaInventarioLista(e.target.value);
+  setPaginaInventario(1);
+}}
       placeholder="Buscar inventario por nombre o SKU..."
       className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-11 pr-4 py-3 text-sm text-white focus:border-blue-500 outline-none"
     />
@@ -5907,9 +7057,51 @@ const inventarioFiltradoUsuario = inventarioVisibleUsuario.filter(
   )}
 </div>
 
-<p className="text-[10px] text-slate-500">
-  Mostrando {inventarioFiltradoUsuario.length} registros de inventario
-</p>
+<div className="flex flex-wrap items-center justify-between gap-3">
+  <p className="text-[10px] text-slate-500">
+    Mostrando{" "}
+    {inventarioFiltradoUsuario.length === 0
+      ? 0
+      : indiceInicioInventario + 1}
+    {" - "}
+    {Math.min(
+      indiceFinInventario,
+      inventarioFiltradoUsuario.length
+    )}
+    {" de "}
+    {inventarioFiltradoUsuario.length} registros de inventario
+  </p>
+
+  <div className="flex items-center gap-2">
+    <button
+      type="button"
+      onClick={() =>
+        setPaginaInventario((pagina) => Math.max(1, pagina - 1))
+      }
+      disabled={paginaInventarioSegura <= 1}
+      className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      ← Anterior
+    </button>
+
+    <span className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200">
+      Página {paginaInventarioSegura} de {totalPaginasInventario}
+    </span>
+
+    <button
+      type="button"
+      onClick={() =>
+        setPaginaInventario((pagina) =>
+          Math.min(totalPaginasInventario, pagina + 1)
+        )
+      }
+      disabled={paginaInventarioSegura >= totalPaginasInventario}
+      className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      Siguiente →
+    </button>
+  </div>
+</div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse">
                     <thead>
@@ -5923,7 +7115,8 @@ const inventarioFiltradoUsuario = inventarioVisibleUsuario.filter(
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 text-sm">
-                      {inventarioFiltradoUsuario.map((inv: StockSucursal, idx: number) => {
+                      {inventarioPaginado.map((inv: StockSucursal, idxPagina: number) => {
+  const idx = indiceInicioInventario + idxPagina;
                         const prod = catalogoProductos.find(p => p.id === inv.productoId);
                         return (
                           <tr key={idx} className="hover:bg-slate-800/40">
@@ -7005,7 +8198,10 @@ const inventarioFiltradoUsuario = inventarioVisibleUsuario.filter(
                       </thead>
                       <tbody className="divide-y divide-slate-800/60 text-sm">
                         {productosFiltrados.map((prod: ProductoCatalogo) => {
-                          const stockSuc = obtenerStockSucursal(prod.id, sucursalActivaPOS);
+                          const stockSuc = obtenerDisponibilidadProductoVenta(
+  prod,
+  sucursalActivaPOS
+);
                           return (
                             <tr key={prod.id} className="hover:bg-slate-800/40">
                               <td className="p-3 font-mono text-blue-400 text-xs">{prod.codigo}</td>
@@ -7013,7 +8209,16 @@ const inventarioFiltradoUsuario = inventarioVisibleUsuario.filter(
                                 {prod.nombre}
                                 {prod.esPaqueteDefinido && <span className="ml-2 text-[10px] bg-blue-950 text-blue-400 px-2 py-0.5 rounded">Paquete</span>}
                               </td>
-                              <td className="p-3 font-mono text-xs">{stockSuc} un.</td>
+                              <td className="p-3 font-mono text-xs">
+  {stockSuc}{' '}
+  {prod.esPaqueteDefinido
+    ? stockSuc === 1
+      ? 'paquete'
+      : 'paquetes'
+    : stockSuc === 1
+      ? 'unidad'
+      : 'unidades'}
+</td>
                               <td className="p-3 font-semibold text-emerald-400 text-xs">{formatearMoneda(prod.precio || 0)}</td>
                               <td className="p-3 text-center flex items-center justify-center gap-2">
                                 {prod.esPaqueteDefinido ? (
@@ -7248,9 +8453,65 @@ const inventarioFiltradoUsuario = inventarioVisibleUsuario.filter(
                       Se actualiza automáticamente al cambiar fecha, sucursal o categoría.
                     </p>
                   </div>
-                  <div className="text-xs text-slate-400">
-                    {detalleVentasReporte.length} línea(s) de venta
-                  </div>
+                  <div className="flex flex-col items-end gap-2">
+
+  <div className="text-xs text-slate-400 text-right">
+    <div>
+      {detalleVentasReporte.length} línea(s) de venta
+    </div>
+
+    <div className="text-[10px] text-slate-500 mt-1">
+      Mostrando{" "}
+      {detalleVentasReporte.length === 0
+        ? 0
+        : indiceInicioDetalleReporte + 1}
+      {" - "}
+      {Math.min(
+        indiceFinDetalleReporte,
+        detalleVentasReporte.length
+      )}
+    </div>
+  </div>
+
+  <div className="flex items-center gap-2">
+
+    <button
+      type="button"
+      onClick={() =>
+        setPaginaDetalleReporte((pagina) =>
+          Math.max(1, pagina - 1)
+        )
+      }
+      disabled={paginaDetalleReporteSegura <= 1}
+      className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      ← Anterior
+    </button>
+
+    <span className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200">
+      Página {paginaDetalleReporteSegura} de {totalPaginasDetalleReporte}
+    </span>
+
+    <button
+      type="button"
+      onClick={() =>
+        setPaginaDetalleReporte((pagina) =>
+          Math.min(
+            totalPaginasDetalleReporte,
+            pagina + 1
+          )
+        )
+      }
+      disabled={
+        paginaDetalleReporteSegura >= totalPaginasDetalleReporte
+      }
+      className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      Siguiente →
+    </button>
+
+  </div>
+</div>
                 </div>
 
                 {detalleVentasReporte.length === 0 ? (
@@ -7275,8 +8536,9 @@ const inventarioFiltradoUsuario = inventarioVisibleUsuario.filter(
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800">
-                        {detalleVentasReporte.map((r, index) => (
-                          <tr key={`${r.folio}-${r.codigo}-${index}`} className="hover:bg-slate-800/40">
+                        {detalleVentasReportePaginado.map((r, index) => (
+                          <tr
+  key={`${r.folio}-${r.codigo}-${indiceInicioDetalleReporte + index}`}>
                             <td className="px-3 py-2 text-slate-300 whitespace-nowrap">{r.fecha}</td>
                             <td className="px-3 py-2 text-blue-300 font-mono">{r.folio}</td>
                             <td className="px-3 py-2 text-white min-w-[220px]">{r.producto}</td>
