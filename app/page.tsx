@@ -39,6 +39,7 @@ interface ProductoCatalogo {
   color: string;
   capacidad: string;
   imagen: string;
+  imagePath?: string;
   manejaGarantia: boolean;
   garantia: string;
   estatus: 'Activo' | 'Inactivo' | 'Descontinuado';
@@ -551,6 +552,16 @@ const [busquedaComponentePaquete, setBusquedaComponentePaquete] =
   const [fClave, setFClave] = useState('');
   const [fCodigo, setFCodigo] = useState('');
   const [fNombre, setFNombre] = useState('');
+  // IMAGEN DEL PRODUCTO
+const [fImagenArchivo, setFImagenArchivo] = useState<File | null>(null);
+const [fImagenPreview, setFImagenPreview] = useState('');
+const [fImagenUrl, setFImagenUrl] = useState('');
+const [fImagenPath, setFImagenPath] = useState('');
+const [subiendoImagenProducto, setSubiendoImagenProducto] = useState(false);
+// IMAGEN AL EDITAR UN PRODUCTO EXISTENTE
+const [imagenEdicionArchivo, setImagenEdicionArchivo] = useState<File | null>(null);
+const [imagenEdicionPreview, setImagenEdicionPreview] = useState('');
+const [subiendoImagenEdicion, setSubiendoImagenEdicion] = useState(false);
   const [fDesc, setFDesc] = useState('');
   const [fCat, setFCat] = useState('Cardio');
   const [fSubcat, setFSubcat] = useState('');
@@ -785,6 +796,7 @@ const historialVisibleUsuario = usuarioEsAdministrador
       color: String(row.color || ''),
       capacidad: String(row.capacity || ''),
       imagen: String(row.image_url || ''),
+      imagePath: String(row.image_path || ''),
       manejaGarantia: row.manages_warranty === true,
       garantia: String(row.warranty || 'Sin garantía'),
       estatus: row.status === 'Inactivo' ? 'Inactivo' : row.status === 'Descontinuado' ? 'Descontinuado' : 'Activo',
@@ -863,6 +875,7 @@ const historialVisibleUsuario = usuarioEsAdministrador
     color: prod.color.trim(),
     capacity: prod.capacidad.trim(),
     image_url: prod.imagen || '',
+    image_path: prod.imagePath || null,
     manages_warranty: prod.manejaGarantia,
     warranty: prod.manejaGarantia ? prod.garantia.trim() : 'Sin garantía',
     status: prod.estatus,
@@ -3061,6 +3074,131 @@ const productosEncontradosParaPaquete =
     }) || null;
   };
 
+// ============================================================
+// IMÁGENES DE PRODUCTOS - SUPABASE STORAGE
+// ============================================================
+
+const seleccionarImagenProducto = (
+  e: React.ChangeEvent<HTMLInputElement>
+) => {
+  const archivo = e.target.files?.[0] || null;
+
+  if (!archivo) return;
+
+  const tiposPermitidos = [
+    'image/jpeg',
+    'image/png',
+    'image/webp'
+  ];
+
+  if (!tiposPermitidos.includes(archivo.type)) {
+    alert(
+      'La imagen debe ser JPG, JPEG, PNG o WEBP.'
+    );
+    e.target.value = '';
+    return;
+  }
+
+  const LIMITE_IMAGEN = 5 * 1024 * 1024;
+
+  if (archivo.size > LIMITE_IMAGEN) {
+    alert(
+      'La imagen no puede pesar más de 5 MB.'
+    );
+    e.target.value = '';
+    return;
+  }
+
+  // Liberamos la vista previa anterior si existía
+  if (fImagenPreview.startsWith('blob:')) {
+    URL.revokeObjectURL(fImagenPreview);
+  }
+
+  setFImagenArchivo(archivo);
+  setFImagenPreview(URL.createObjectURL(archivo));
+};
+
+
+const seleccionarImagenProductoEdicion = (
+  e: React.ChangeEvent<HTMLInputElement>
+) => {
+  const archivo = e.target.files?.[0] || null;
+
+  if (!archivo) return;
+
+  const tiposPermitidos = [
+    'image/jpeg',
+    'image/png',
+    'image/webp'
+  ];
+
+  if (!tiposPermitidos.includes(archivo.type)) {
+    alert('La imagen debe ser JPG, JPEG, PNG o WEBP.');
+    e.target.value = '';
+    return;
+  }
+
+  const LIMITE_IMAGEN = 5 * 1024 * 1024;
+
+  if (archivo.size > LIMITE_IMAGEN) {
+    alert('La imagen no puede pesar más de 5 MB.');
+    e.target.value = '';
+    return;
+  }
+
+  if (imagenEdicionPreview.startsWith('blob:')) {
+    URL.revokeObjectURL(imagenEdicionPreview);
+  }
+
+  setImagenEdicionArchivo(archivo);
+  setImagenEdicionPreview(URL.createObjectURL(archivo));
+};
+const subirImagenProductoStorage = async (
+  archivo: File,
+  skuProducto: string
+) => {
+  const extension =
+    archivo.name.split('.').pop()?.toLowerCase() || 'jpg';
+
+  const skuSeguro = (skuProducto || 'PRODUCTO')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9-_]/g, '-');
+
+  const nombreArchivo =
+    `${skuSeguro}/${Date.now()}.${extension}`;
+
+  const { error: errorUpload } = await supabase.storage
+    .from('product-images')
+    .upload(
+      nombreArchivo,
+      archivo,
+      {
+        cacheControl: '3600',
+        upsert: false,
+        contentType: archivo.type
+      }
+    );
+
+  if (errorUpload) {
+    throw errorUpload;
+  }
+
+  const { data: urlData } = supabase.storage
+    .from('product-images')
+    .getPublicUrl(nombreArchivo);
+
+  if (!urlData?.publicUrl) {
+    throw new Error(
+      'No fue posible obtener la URL pública de la imagen.'
+    );
+  }
+
+  return {
+    imageUrl: urlData.publicUrl,
+    imagePath: nombreArchivo
+  };
+};
   const registrarProductoCatalogo = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!fCodigo || !fNombre || !fPVenta) return;
@@ -3104,7 +3242,8 @@ const productosEncontradosParaPaquete =
       unidadMedida: fUnidad,
       color: fColor,
       capacidad: fCapacidad,
-      imagen: '',
+      imagen: fImagenUrl,
+      imagePath: fImagenPath,
       manejaGarantia: fManejaGarantia,
       garantia: fManejaGarantia ? fGarantia : 'Sin garantía',
       estatus: 'Activo',
@@ -3115,7 +3254,21 @@ const productosEncontradosParaPaquete =
       componentesPaquete: fEsPaquete ? componentesSeleccionadosPaquete : []
     };
 
+    let imagenSubidaPath = '';
     try {
+    if (fImagenArchivo) {
+  setSubiendoImagenProducto(true);
+
+  const imagenSubida = await subirImagenProductoStorage(
+    fImagenArchivo,
+    fCodigo
+  );
+
+  nuevoProd.imagen = imagenSubida.imageUrl;
+  nuevoProd.imagePath = imagenSubida.imagePath;
+
+  imagenSubidaPath = imagenSubida.imagePath;
+}
       const { data, error } = await supabase
         .from('products')
         .insert(construirPayloadProductoDb(nuevoProd))
@@ -3126,6 +3279,11 @@ const productosEncontradosParaPaquete =
         if (error.code === '23505') {
           setMensajeNotif('⚠️ El SKU o el nombre del producto ya existe en la base de datos. No se creó el duplicado.');
           setModalNotifAbierto(true);
+          if (imagenSubidaPath) {
+  await supabase.storage
+    .from('product-images')
+    .remove([imagenSubidaPath]);
+}
           return;
         }
         throw error;
@@ -3138,6 +3296,11 @@ const productosEncontradosParaPaquete =
       setFClave('');
       setFCodigo('');
       setFNombre('');
+      if (imagenSubidaPath) {
+  await supabase.storage
+    .from('product-images')
+    .remove([imagenSubidaPath]);
+}
       setFDesc('');
       setFPCompra('');
       setFPVenta('');
@@ -3145,8 +3308,15 @@ const productosEncontradosParaPaquete =
       setMensajeNotif('¡Producto registrado y guardado permanentemente en Supabase!');
       setModalNotifAbierto(true);
     } catch (error: any) {
+    if (imagenSubidaPath) {
+  await supabase.storage
+    .from('product-images')
+    .remove([imagenSubidaPath]);
+}
       setMensajeNotif(`No fue posible registrar el producto: ${error?.message || String(error)}`);
       setModalNotifAbierto(true);
+      }finally {
+  setSubiendoImagenProducto(false);
     }
   };
 
@@ -3167,32 +3337,79 @@ const productosEncontradosParaPaquete =
       return;
     }
 
+const rutaImagenAnterior = productoSeleccionadoEdicion.imagePath || '';
+let rutaImagenNueva = '';
+let productoParaGuardar: ProductoCatalogo = { ...productoSeleccionadoEdicion };
     try {
+      if (imagenEdicionArchivo) {
+  setSubiendoImagenEdicion(true);
+
+  const imagenSubida = await subirImagenProductoStorage(
+    imagenEdicionArchivo,
+    productoSeleccionadoEdicion.codigo
+  );
+
+  productoParaGuardar.imagen = imagenSubida.imageUrl;
+  productoParaGuardar.imagePath = imagenSubida.imagePath;
+
+  rutaImagenNueva = imagenSubida.imagePath;
+}
       const { data, error } = await supabase
         .from('products')
-        .update(construirPayloadProductoDb(productoSeleccionadoEdicion))
+        .update(construirPayloadProductoDb(productoParaGuardar))
         .eq('id', productoSeleccionadoEdicion.id)
         .select('*, suppliers(commercial_name)')
         .single();
 
       if (error) {
         if (error.code === '23505') {
+          if (rutaImagenNueva) {
+  await supabase.storage
+    .from('product-images')
+    .remove([rutaImagenNueva]);
+}
           setMensajeNotif('⚠️ El SKU o el nombre ya pertenece a otro producto en la base de datos.');
           setModalNotifAbierto(true);
           return;
         }
         throw error;
       }
+      // Si se guardó correctamente una nueva imagen,
+// eliminamos la fotografía anterior de Storage.
+if (
+  rutaImagenNueva &&
+  rutaImagenAnterior &&
+  rutaImagenAnterior !== rutaImagenNueva
+) {
+  const { error: errorEliminarAnterior } = await supabase.storage
+    .from('product-images')
+    .remove([rutaImagenAnterior]);
+
+  if (errorEliminarAnterior) {
+    console.warn(
+      'No se pudo eliminar la imagen anterior del producto:',
+      errorEliminarAnterior
+    );
+  }
+}
 
       const actualizado = mapearProductoDb(data);
       setCatalogoProductos(prev => prev.map(p => p.id === actualizado.id ? actualizado : p));
+      if (imagenEdicionPreview.startsWith('blob:')) {
+  URL.revokeObjectURL(imagenEdicionPreview);
+}
+
+setImagenEdicionArchivo(null);
+setImagenEdicionPreview('');
       setProductoSeleccionadoEdicion(null);
       setMensajeNotif('¡Ficha técnica actualizada permanentemente en Supabase!');
       setModalNotifAbierto(true);
     } catch (error: any) {
       setMensajeNotif(`No fue posible actualizar el producto: ${error?.message || String(error)}`);
       setModalNotifAbierto(true);
-    }
+    } finally {
+  setSubiendoImagenEdicion(false);
+}
   };
 
   const eliminarProductoCatalogo = async (producto: ProductoCatalogo) => {
@@ -6495,6 +6712,81 @@ const inventarioPaginado = inventarioFiltradoUsuario.slice(
                     )}
 
                     <form onSubmit={registrarProductoCatalogo} className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                      {/* FOTOGRAFÍA DEL PRODUCTO */}
+<div className="col-span-full bg-slate-950/60 border border-slate-700 rounded-xl p-4">
+  <label className="block text-xs font-semibold text-slate-300 mb-3">
+    Fotografía del producto
+  </label>
+
+  <div className="flex flex-col md:flex-row items-start gap-4">
+
+    {/* VISTA PREVIA */}
+    <div className="w-40 h-40 rounded-xl border border-slate-700 bg-slate-900 overflow-hidden flex items-center justify-center">
+      {fImagenPreview ? (
+        <img
+          src={fImagenPreview}
+          alt="Vista previa del producto"
+          className="w-full h-full object-contain"
+        />
+      ) : (
+        <div className="text-center text-slate-500 px-3">
+          <div className="text-3xl mb-2">📷</div>
+          <div className="text-[10px]">
+            Sin fotografía
+          </div>
+        </div>
+      )}
+    </div>
+
+    {/* CONTROLES */}
+    <div className="flex-1 space-y-3">
+
+      <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-500 px-4 py-2 text-xs font-semibold text-white">
+        📷 Seleccionar imagen
+
+        <input
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          onChange={seleccionarImagenProducto}
+          className="hidden"
+        />
+      </label>
+
+      {fImagenArchivo && (
+        <div className="text-xs text-slate-400">
+          Archivo seleccionado:
+          <span className="text-slate-200 ml-1">
+            {fImagenArchivo.name}
+          </span>
+        </div>
+      )}
+
+      {fImagenPreview && (
+  <button
+    type="button"
+    onClick={() => {
+      if (fImagenPreview.startsWith('blob:')) {
+        URL.revokeObjectURL(fImagenPreview);
+      }
+
+      setFImagenArchivo(null);
+      setFImagenPreview('');
+      setFImagenUrl('');
+      setFImagenPath('');
+    }}
+    className="rounded-lg border border-red-800 bg-red-950/40 px-3 py-2 text-xs font-semibold text-red-300 hover:bg-red-950/70"
+  >
+    🗑 Quitar imagen
+  </button>
+)}
+
+      <div className="text-[10px] text-slate-500">
+        Formatos permitidos: JPG, JPEG, PNG o WEBP. Máximo 5 MB.
+      </div>
+
+    </div>
+  </div>
+</div>
                       <div>
                         <label className="block text-slate-400 mb-1">1. Clave interna</label>
                         <input type="text" placeholder="CLV-001" value={fClave} onChange={(e) => setFClave(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono" />
@@ -6782,6 +7074,84 @@ const inventarioPaginado = inventarioFiltradoUsuario.slice(
                     </div>
 
                     <form onSubmit={actualizarProductoCatalogo} className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                      {/* FOTOGRAFÍA DEL PRODUCTO - EDICIÓN */}
+<div className="col-span-full bg-slate-950/60 border border-slate-700 rounded-xl p-4">
+  <label className="block text-xs font-semibold text-slate-300 mb-3">
+    Fotografía del producto
+  </label>
+
+  <div className="flex flex-col md:flex-row items-start gap-4">
+
+    {/* FOTO ACTUAL O NUEVA VISTA PREVIA */}
+    <div className="w-40 h-40 rounded-xl border border-slate-700 bg-slate-900 overflow-hidden flex items-center justify-center">
+      {imagenEdicionPreview || productoSeleccionadoEdicion.imagen ? (
+        <img
+          src={
+            imagenEdicionPreview ||
+            productoSeleccionadoEdicion.imagen
+          }
+          alt={productoSeleccionadoEdicion.nombre}
+          className="w-full h-full object-contain"
+        />
+      ) : (
+        <div className="text-center text-slate-500 px-3">
+          <div className="text-3xl mb-2">📷</div>
+          <div className="text-[10px]">
+            Sin fotografía
+          </div>
+        </div>
+      )}
+    </div>
+
+    {/* CONTROLES */}
+    <div className="flex-1 space-y-3">
+
+      <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-500 px-4 py-2 text-xs font-semibold text-white">
+        📷 {productoSeleccionadoEdicion.imagen
+          ? 'Cambiar imagen'
+          : 'Agregar imagen'}
+
+        <input
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          onChange={seleccionarImagenProductoEdicion}
+          className="hidden"
+        />
+      </label>
+
+      {imagenEdicionArchivo && (
+        <div className="text-xs text-slate-400">
+          Nueva imagen seleccionada:
+          <span className="text-slate-200 ml-1">
+            {imagenEdicionArchivo.name}
+          </span>
+        </div>
+      )}
+
+      {imagenEdicionPreview && (
+        <button
+          type="button"
+          onClick={() => {
+            if (imagenEdicionPreview.startsWith('blob:')) {
+              URL.revokeObjectURL(imagenEdicionPreview);
+            }
+
+            setImagenEdicionArchivo(null);
+            setImagenEdicionPreview('');
+          }}
+          className="rounded-lg border border-amber-800 bg-amber-950/40 px-3 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-950/70"
+        >
+          ↩ Cancelar cambio de imagen
+        </button>
+      )}
+
+      <div className="text-[10px] text-slate-500">
+        JPG, JPEG, PNG o WEBP. Máximo 5 MB.
+      </div>
+
+    </div>
+  </div>
+</div>
                       <div>
                         <label className="block text-slate-400 mb-1">1. Clave interna</label>
                         <input type="text" value={productoSeleccionadoEdicion.claveInterna} onChange={(e) => setProductoSeleccionadoEdicion({...productoSeleccionadoEdicion, claveInterna: e.target.value})} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono" />
@@ -7153,6 +7523,7 @@ const inventarioPaginado = inventarioFiltradoUsuario.slice(
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="border-b border-slate-800 text-xs font-semibold text-slate-400 uppercase bg-slate-950/50">
+                      <th className="p-4">Imagen</th>
                         <th className="p-4">SKU / Clave</th>
                         <th className="p-4">Nombre</th>
                         <th className="p-4">Categoría</th>
@@ -7170,6 +7541,22 @@ const inventarioPaginado = inventarioFiltradoUsuario.slice(
                       )}
                       {productosCatalogoPaginados.map((prod: ProductoCatalogo) => (
                         <tr key={prod.id} className="hover:bg-slate-800/40">
+                          <td className="p-3">
+  <div className="w-16 h-16 rounded-lg border border-slate-700 bg-slate-900 overflow-hidden flex items-center justify-center">
+    {prod.imagen ? (
+      <img
+        src={prod.imagen}
+        alt={prod.nombre}
+        className="w-full h-full object-contain"
+      />
+    ) : (
+      <div className="text-center text-slate-500">
+        <div className="text-xl">📷</div>
+        <div className="text-[8px]">Sin imagen</div>
+      </div>
+    )}
+  </div>
+</td>
                           <td className="p-4 font-mono text-blue-400 text-xs">{prod.codigo}</td>
                           <td className="p-4 font-medium text-white text-xs">
                             {prod.nombre}
@@ -8596,6 +8983,7 @@ const inventarioPaginado = inventarioFiltradoUsuario.slice(
                     <table className="w-full text-left border-collapse">
                       <thead>
                         <tr className="border-b border-slate-800 text-xs font-semibold text-slate-400 uppercase bg-slate-950/50">
+                          <th className="p-3">Imagen</th>
                           <th className="p-3">Código</th>
                           <th className="p-3">Producto / Paquete</th>
                           <th className="p-3">Stock</th>
@@ -8611,6 +8999,22 @@ const inventarioPaginado = inventarioFiltradoUsuario.slice(
 );
                           return (
                             <tr key={prod.id} className="hover:bg-slate-800/40">
+                              <td className="p-2">
+  <div className="w-14 h-14 rounded-lg border border-slate-700 bg-slate-900 overflow-hidden flex items-center justify-center">
+    {prod.imagen ? (
+      <img
+        src={prod.imagen}
+        alt={prod.nombre}
+        className="w-full h-full object-contain"
+      />
+    ) : (
+      <div className="text-center text-slate-500">
+        <div className="text-lg">📷</div>
+        <div className="text-[7px]">Sin imagen</div>
+      </div>
+    )}
+  </div>
+</td>
                               <td className="p-3 font-mono text-blue-400 text-xs">{prod.codigo}</td>
                               <td className="p-3 font-medium text-white text-xs">
                                 {prod.nombre}
