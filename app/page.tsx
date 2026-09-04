@@ -257,6 +257,8 @@ interface Cotizacion {
   sucursal: string;
   items: ItemVenta[];
   total: number;
+  convertedSaleId?: number;
+folioVenta?: string;
   estatus: 'Pendiente' | 'Autorizada' | 'Expirada';
 }
 
@@ -471,6 +473,8 @@ const [busquedaInventarioLista, setBusquedaInventarioLista] = useState<string>('
   const [inputNumeroSerieFisico, setInputNumeroSerieFisico] = useState<string>('');
   const [lineaSerieEditandoId, setLineaSerieEditandoId] = useState<string | null>(null);
   const [cotizacionOrigenPOS, setCotizacionOrigenPOS] = useState<string | null>(null);
+  const [cotizacionDetalle, setCotizacionDetalle] = useState<any | null>(null);
+  const [cotizacionEditando, setCotizacionEditando] = useState<Cotizacion | null>(null);
 
   const [gastos, setGastos] = useState<GastoOperativo[]>([]);
   const [modalGastoAbierto, setModalGastoAbierto] = useState<boolean>(false);
@@ -1030,7 +1034,11 @@ const historialVisibleUsuario = usuarioEsAdministrador
       const items = Array.isArray(q.quote_items)
         ? q.quote_items.map((it: any) => mapearItemOperacionDb(it, nombreSucursal))
         : [];
+        const ventaRelacionada = (salesResp.data || []).find(
+  (venta: any) => Number(venta.id) === Number(q.converted_sale_id)
+);
       return {
+       
         idDb: Number(q.id),
         folio: String(q.folio || ''),
         fechaCreacion: q.created_at ? new Date(q.created_at).toLocaleString('es-MX') : '',
@@ -1039,6 +1047,8 @@ const historialVisibleUsuario = usuarioEsAdministrador
         sucursal: nombreSucursal,
         items,
         total: Number(q.total || 0),
+        convertedSaleId: q.converted_sale_id ? Number(q.converted_sale_id) : undefined,
+folioVenta: ventaRelacionada?.folio ? String(ventaRelacionada.folio) : undefined,
         estatus:
           q.status === 'Autorizada' ? 'Autorizada' :
           q.status === 'Expirada' || q.status === 'Cancelada' ? 'Expirada' :
@@ -4037,7 +4047,13 @@ return carritoActualizado;
 }
 
           const nueva = item.cantidadVendida + delta;
-          if (nueva > item.stock && !item.esRegalo) return item;
+          if (
+  !cotizacionEditando &&
+  nueva > item.stock &&
+  !item.esRegalo
+) {
+  return item;
+}
           return nueva > 0 ? { ...item, cantidadVendida: nueva } : null;
         })
         .filter(Boolean) as ItemVenta[]
@@ -4252,25 +4268,49 @@ const productosFiltrados = catalogoProductos.filter(
     try {
     const itemsDb = construirItemsOperacionDb(carrito);
      
-      const { data, error } = await supabase.rpc('quote_create', {
-        p_folio: folio,
-        p_customer_id: clienteObj?.id || null,
-        p_customer_name: clienteSeleccionadoPOS || 'Público General',
-        p_branch_id: branchId,
-        p_items: itemsDb,
-        p_expires_at: expiracionDate.toISOString()
-      });
-      if (error) throw error;
+      let data: any;
+let error: any;
 
+if (cotizacionEditando) {
+  const respuesta = await supabase.rpc('quote_update', {
+    p_quote_id: cotizacionEditando.idDb,
+    p_customer_id: clienteObj?.id || null,
+    p_customer_name: clienteSeleccionadoPOS || 'Público General',
+    p_items: itemsDb,
+    p_expires_at: expiracionDate.toISOString()
+  });
+
+  data = respuesta.data;
+  error = respuesta.error;
+} else {
+  const respuesta = await supabase.rpc('quote_create', {
+    p_folio: folio,
+    p_customer_id: clienteObj?.id || null,
+    p_customer_name: clienteSeleccionadoPOS || 'Público General',
+    p_branch_id: branchId,
+    p_items: itemsDb,
+    p_expires_at: expiracionDate.toISOString()
+  });
+
+  data = respuesta.data;
+  error = respuesta.error;
+}
+
+if (error) throw error;
       setCarrito([]);
       setCotizacionOrigenPOS(null);
+      setCotizacionEditando(null);
       await Promise.all([cargarProductosInventario(), cargarVentasCotizaciones(), cargarClientesProveedoresFinanzas()]);
 
       setMensajeNotif(
-        `¡Cotización ${String((data as any)?.folio || folio)} guardada en Supabase! ` +
-        'El stock quedó APARTADO por 48 horas sin reducir la existencia física. ' +
-        'La serie puede capturarse hasta el momento de concretar la venta.'
-      );
+  cotizacionEditando
+    ? `Cotización ${cotizacionEditando.folio} actualizada correctamente. ` +
+      'Se conservaron el mismo folio y el estatus PENDIENTE. ' +
+      'El inventario apartado fue ajustado de acuerdo con los cambios.'
+    : `¡Cotización ${String((data as any)?.folio || folio)} guardada en Supabase! ` +
+      'El stock quedó APARTADO por 48 horas sin reducir la existencia física. ' +
+      'La serie puede capturarse hasta el momento de concretar la venta.'
+);
       setModalNotifAbierto(true);
     } catch (error: any) {
       setMensajeNotif(`No fue posible generar la cotización: ${error?.message || String(error)}`);
@@ -4278,7 +4318,10 @@ const productosFiltrados = catalogoProductos.filter(
     }
   };
 
-  const autorizarCotizacion = (cot: Cotizacion) => {
+  const autorizarCotizacion = (
+  cot: Cotizacion,
+  modoEdicion: boolean = false
+) => {
     if (cot.estatus !== 'Pendiente') return;
     if (!puedeOperarSucursal(cot.sucursal)) {
       setMensajeNotif('No tiene permiso para autorizar cotizaciones de otra sucursal.');
@@ -4297,7 +4340,11 @@ const productosFiltrados = catalogoProductos.filter(
     setCarrito(itemsParaVenta);
     setClienteSeleccionadoPOS(cot.cliente || 'Público General');
     setSucursalActivaPOS(cot.sucursal);
-    setCotizacionOrigenPOS(cot.folio);
+    if (modoEdicion) {
+  setCotizacionOrigenPOS(null);
+} else {
+  setCotizacionOrigenPOS(cot.folio);
+}
     setVentaExitosa(false);
     setModuloActivo('ventas');
     setMensajeNotif(
@@ -4307,6 +4354,75 @@ const productosFiltrados = catalogoProductos.filter(
     );
     setModalNotifAbierto(true);
   };
+
+    const editarCotizacion = async (cot: Cotizacion) => {
+    if (cot.estatus !== 'Pendiente') {
+      setMensajeNotif(
+        `La cotización ${cot.folio} ya no está pendiente y no puede editarse.`
+      );
+      setModalNotifAbierto(true);
+      return;
+    }
+
+    if (!cot.idDb) {
+      setMensajeNotif(
+        'No se encontró el identificador de la cotización en la base de datos.'
+      );
+      setModalNotifAbierto(true);
+      return;
+    }
+
+    if (!puedeOperarSucursal(cot.sucursal)) {
+      setMensajeNotif(
+        'No tiene permiso para modificar cotizaciones de esta sucursal.'
+      );
+      setModalNotifAbierto(true);
+      return;
+    }
+
+   const confirmar = window.confirm(
+  `¿Desea editar la cotización ${cot.folio}?\n\n` +
+  'La cotización conservará el mismo folio y seguirá PENDIENTE.\n' +
+  'Podrá agregar o quitar productos, cambiar cantidades y descuentos.\n\n' +
+  'Los cambios no se guardarán hasta que seleccione "Guardar cotización".'
+);
+
+if (!confirmar) return;
+
+try {
+  // Marcamos esta cotización como la que se está editando.
+  setCotizacionEditando(cot);
+
+  // Carga los productos actuales en el Punto de Venta.
+  autorizarCotizacion(cot, true);
+
+  // IMPORTANTE:
+  // No la tratamos como una cotización que se está convirtiendo en venta.
+  setCotizacionOrigenPOS(null);
+
+  // Cierra la ventana de detalle.
+  setCotizacionDetalle(null);
+
+  setMensajeNotif(
+    `Cotización ${cot.folio} abierta para edición. ` +
+    'La cotización original continúa PENDIENTE y conserva su inventario apartado. ' +
+    'Realice los cambios y después guarde la cotización.'
+  );
+
+  setModalNotifAbierto(true);
+
+} catch (error: any) {
+  setCotizacionEditando(null);
+
+  setMensajeNotif(
+    `No fue posible abrir la cotización para edición: ${
+      error?.message || String(error)
+    }`
+  );
+
+  setModalNotifAbierto(true);
+}
+};
 
   const expirarCotizacion = async (cot: Cotizacion) => {
     if (cot.estatus !== 'Pendiente') return;
@@ -4392,6 +4508,7 @@ const productosFiltrados = catalogoProductos.filter(
     const folioTicket = `TICK-${Math.floor(100000 + Math.random() * 900000)}`;
 
     try {
+      
       const { data, error } = await supabase.rpc('sale_create', {
         p_folio: folioTicket,
         p_customer_id: clienteObj?.id || null,
@@ -5816,26 +5933,7 @@ const inventarioFiltradoUsuario = inventarioVisibleUsuario.filter(
     const producto = catalogoProductos.find(
       (p: ProductoCatalogo) => p.id === inventario.productoId
     );
-    const totalPaginasInventario = Math.max(
-  1,
-  Math.ceil(inventarioFiltradoUsuario.length / INVENTARIO_POR_PAGINA)
-);
-
-const paginaInventarioSegura = Math.min(
-  paginaInventario,
-  totalPaginasInventario
-);
-
-const indiceInicioInventario =
-  (paginaInventarioSegura - 1) * INVENTARIO_POR_PAGINA;
-
-const indiceFinInventario =
-  indiceInicioInventario + INVENTARIO_POR_PAGINA;
-
-const inventarioPaginado = inventarioFiltradoUsuario.slice(
-  indiceInicioInventario,
-  indiceFinInventario
-);
+    
 
     if (!producto) return false;
 
@@ -8835,12 +8933,207 @@ const inventarioPaginado = inventarioFiltradoUsuario.slice(
                 {cotizacionesVisiblesUsuario.length === 0 ? (
                   <div className="p-12 text-center"><p className="text-slate-400 font-semibold">Todavía no hay cotizaciones.</p><p className="text-slate-500 text-xs mt-2">Agrega productos al carrito en Ventas y selecciona “Generar Cotización (48h)”.</p><button type="button" onClick={() => setModuloActivo('ventas')} className="mt-4 bg-blue-600 hover:bg-blue-500 text-white font-bold px-5 py-2 rounded-xl text-xs cursor-pointer">Ir a Ventas</button></div>
                 ) : (
-                  <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr className="bg-slate-950/60 text-slate-400 uppercase border-b border-slate-800"><th className="p-3">Folio</th><th className="p-3">Cliente</th><th className="p-3">Sucursal</th><th className="p-3">Creación</th><th className="p-3">Expira</th><th className="p-3">Productos</th><th className="p-3">Total</th><th className="p-3">Estatus</th><th className="p-3 text-center">Acciones</th></tr></thead><tbody className="divide-y divide-slate-800/60">{cotizacionesVisiblesUsuario.map(cot => <tr key={cot.folio} className="hover:bg-slate-800/40"><td className="p-3 font-mono text-blue-400 font-bold">{cot.folio}</td><td className="p-3 text-white font-semibold">{cot.cliente || 'Público general'}</td><td className="p-3 text-slate-300">{cot.sucursal}</td><td className="p-3 text-slate-300">{cot.fechaCreacion}</td><td className="p-3 text-slate-300">{cot.fechaExpiracion}</td><td className="p-3 text-purple-400 font-bold">{cot.items.reduce((acc, it) => acc + it.cantidadVendida, 0)}</td><td className="p-3 text-emerald-400 font-bold">{formatearMoneda(cot.total)}</td><td className="p-3"><span className={`px-2 py-1 rounded font-bold ${cot.estatus === 'Autorizada' ? 'bg-emerald-950 text-emerald-400' : cot.estatus === 'Expirada' ? 'bg-red-950 text-red-400' : 'bg-amber-950 text-amber-400'}`}>{cot.estatus}</span></td><td className="p-3 text-center"><div className="flex flex-wrap justify-center gap-1.5">{cot.estatus === 'Pendiente' && <><button type="button" onClick={() => autorizarCotizacion(cot)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded font-bold cursor-pointer">✓ Autorizar</button><button type="button" onClick={() => expirarCotizacion(cot)} className="bg-red-700 hover:bg-red-600 text-white px-2.5 py-1 rounded font-bold cursor-pointer">⏱ Expirar</button></>}</div></td></tr>)}</tbody></table></div>
+                  <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr className="bg-slate-950/60 text-slate-400 uppercase border-b border-slate-800"><th className="p-3">Folio</th><th className="p-3">Cliente</th><th className="p-3">Sucursal</th><th className="p-3">Creación</th><th className="p-3">Expira</th><th className="p-3">Productos</th><th className="p-3">Total</th><th className="p-3">Estatus</th><th className="p-3 text-center">Acciones</th></tr></thead><tbody className="divide-y divide-slate-800/60">{cotizacionesVisiblesUsuario.map(cot => <tr key={cot.folio} className="hover:bg-slate-800/40"><td className="p-3 font-mono text-blue-400 font-bold">{cot.folio}</td><td className="p-3 text-white font-semibold">{cot.cliente || 'Público general'}</td><td className="p-3 text-slate-300">{cot.sucursal}</td><td className="p-3 text-slate-300">{cot.fechaCreacion}</td><td className="p-3 text-slate-300">{cot.fechaExpiracion}</td><td className="p-3 text-purple-400 font-bold">{cot.items.reduce((acc, it) => acc + it.cantidadVendida, 0)}</td><td className="p-3 text-emerald-400 font-bold">{formatearMoneda(cot.total)}</td><td className="p-3"><span className={`px-2 py-1 rounded font-bold ${cot.estatus === 'Autorizada' ? 'bg-emerald-950 text-emerald-400' : cot.estatus === 'Expirada' ? 'bg-red-950 text-red-400' : 'bg-amber-950 text-amber-400'}`}>{cot.estatus}</span></td><td className="p-3 text-center"><div className="flex flex-wrap justify-center gap-1.5"><button
+  type="button"
+  onClick={() => setCotizacionDetalle(cot)}
+  className="bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1 rounded font-bold cursor-pointer"
+>
+  👁 Ver detalle
+</button>{cot.estatus === 'Pendiente' && <><button type="button" onClick={() => autorizarCotizacion(cot)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded font-bold cursor-pointer">✓ Autorizar</button><button type="button" onClick={() => expirarCotizacion(cot)} className="bg-red-700 hover:bg-red-600 text-white px-2.5 py-1 rounded font-bold cursor-pointer">⏱ Expirar</button></>}</div></td></tr>)}</tbody></table></div>
                 )}
               </div>
             </div>
           )}
+          {/* MODAL DETALLE DE COTIZACIÓN */}
+{cotizacionDetalle && (
+  <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4">
 
+    <div className="w-full max-w-5xl max-h-[90vh] bg-slate-900 border border-blue-500/60 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+
+      {/* ENCABEZADO */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 border-b border-slate-800 shrink-0">
+
+        <div>
+          <h3 className="text-xl font-bold text-white">
+            👁 Detalle de Cotización
+          </h3>
+
+          <p className="text-sm text-blue-400 font-mono mt-1">
+            {cotizacionDetalle.folio}
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+
+          {cotizacionDetalle.estatus === 'Pendiente' && (
+            <button
+              type="button"
+              onClick={async () => {
+                await editarCotizacion(cotizacionDetalle);
+                setCotizacionDetalle(null);
+              }}
+              className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold text-sm"
+            >
+              ✏️ Editar cotización
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setCotizacionDetalle(null)}
+            className="bg-red-950/50 hover:bg-red-900 border border-red-700 text-red-300 px-4 py-2 rounded-lg font-bold text-sm"
+          >
+            ✕ Cerrar
+          </button>
+
+        </div>
+      </div>
+
+      {/* CONTENIDO CON SCROLL */}
+      <div className="overflow-y-auto flex-1">
+
+        {/* DATOS GENERALES */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 p-5 border-b border-slate-800">
+
+          <div className="bg-slate-950 rounded-xl p-4">
+            <p className="text-[10px] text-slate-500 uppercase">
+              Cliente
+            </p>
+            <p className="text-sm text-white font-semibold mt-1">
+              {cotizacionDetalle.cliente || 'Público General'}
+            </p>
+          </div>
+
+          <div className="bg-slate-950 rounded-xl p-4">
+            <p className="text-[10px] text-slate-500 uppercase">
+              Sucursal
+            </p>
+            <p className="text-sm text-white font-semibold mt-1">
+              {cotizacionDetalle.sucursal || 'Sin sucursal'}
+            </p>
+          </div>
+
+          <div className="bg-slate-950 rounded-xl p-4">
+            <p className="text-[10px] text-slate-500 uppercase">
+              Creación
+            </p>
+            <p className="text-sm text-white mt-1">
+              {cotizacionDetalle.fechaCreacion || '--'}
+            </p>
+          </div>
+
+          <div className="bg-slate-950 rounded-xl p-4">
+            <p className="text-[10px] text-slate-500 uppercase">
+              Estatus
+            </p>
+            <p
+              className={`text-sm font-bold mt-1 ${
+                cotizacionDetalle.estatus === 'Pendiente'
+                  ? 'text-amber-400'
+                  : cotizacionDetalle.estatus === 'Autorizada'
+                  ? 'text-emerald-400'
+                  : 'text-red-400'
+              }`}
+            >
+              {cotizacionDetalle.estatus}
+            </p>
+          </div>
+
+{cotizacionDetalle.folioVenta && (
+  <div className="bg-slate-950/60 rounded-xl p-4">
+    <p className="text-xs text-slate-500 uppercase tracking-wide">
+      Venta relacionada
+    </p>
+
+    <p className="text-emerald-400 font-bold mt-2">
+      {cotizacionDetalle.folioVenta}
+    </p>
+  </div>
+)}
+        </div>
+
+        {/* PRODUCTOS */}
+        <div className="p-5">
+
+          <h4 className="text-sm font-bold text-slate-300 mb-3">
+            Productos de la cotización
+          </h4>
+
+          <div className="space-y-2">
+
+            {(cotizacionDetalle.items || []).map(
+              (item: any, index: number) => (
+                <div
+                  key={item.lineaId || index}
+                  className="bg-slate-950 border border-slate-800 rounded-xl p-4"
+                >
+                  <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-3 md:items-center">
+
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-white">
+                        {item.nombre || item.producto || 'Producto'}
+                      </p>
+
+                      {item.codigo && (
+                        <p className="text-xs text-slate-500 font-mono mt-1">
+                          SKU: {item.codigo}
+                        </p>
+                      )}
+
+                      {item.numeroSerie && (
+                        <p className="text-xs text-blue-400 mt-1">
+                          Serie: {item.numeroSerie}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="text-left md:text-center">
+                      <p className="text-[10px] uppercase text-slate-500">
+                        Cantidad
+                      </p>
+                      <p className="text-sm font-bold text-white">
+                        {item.cantidadVendida || 1}
+                      </p>
+                    </div>
+
+                    <div className="text-left md:text-right min-w-[120px]">
+                      <p className="text-[10px] uppercase text-slate-500">
+                        Importe
+                      </p>
+                      <p className="text-sm font-bold text-emerald-400">
+                        {formatearMoneda(
+                          Number(item.precio || 0) *
+                          Number(item.cantidadVendida || 1)
+                        )}
+                      </p>
+                    </div>
+
+                  </div>
+                </div>
+              )
+            )}
+
+          </div>
+        </div>
+
+      </div>
+
+      {/* TOTAL */}
+      <div className="shrink-0 border-t border-slate-800 bg-slate-950/70 px-5 py-4 flex items-center justify-between">
+
+        <span className="text-base font-bold text-white">
+          Total cotización:
+        </span>
+
+        <span className="text-xl font-bold text-emerald-400">
+          {formatearMoneda(Number(cotizacionDetalle.total || 0))}
+        </span>
+
+      </div>
+
+    </div>
+  </div>
+)}
           {/* MÓDULO DE VENTAS (POS) CON OPCIÓN DE PAGO A CRÉDITO */}
           {moduloActivo === 'ventas' && verificarPermisoModulo('ventas') && (
             <div className="space-y-6">
@@ -9101,7 +9394,7 @@ const inventarioPaginado = inventarioFiltradoUsuario.slice(
                       </select>
                     </div>
 
-                    <div className="space-y-3 max-h-40 overflow-y-auto pr-1">
+                    <div className="space-y-3 max-h-[45vh] overflow-y-auto overscroll-contain pr-2">
                       {carrito.length === 0 ? (
                         <p className="text-xs text-slate-500 text-center py-4">El carrito está vacío.</p>
                       ) : (
