@@ -601,6 +601,21 @@ const [subiendoImagenEdicion, setSubiendoImagenEdicion] = useState(false);
 
   const sucursalesActivas = sucursales.filter((s: Sucursal) => s.estatus === 'Activa');
   const usuarioEsAdministrador = usuarioLogueado?.rol === 'Administrador';
+  const puedeVerCategoria = (categoria: string) => {
+  if (!usuarioLogueado) return false;
+
+  if (usuarioLogueado.rol === 'Administrador') {
+    return true;
+  }
+
+  const permitidas = usuarioLogueado.categoriasPermitidas || ['*'];
+
+  if (permitidas.includes('*')) {
+    return true;
+  }
+
+  return permitidas.includes(categoria);
+};
   const sucursalAsignadaUsuario = !usuarioEsAdministrador && usuarioLogueado?.sucursalId
     ? sucursales.find((s: Sucursal) => s.id === usuarioLogueado.sucursalId) || null
     : null;
@@ -4118,21 +4133,6 @@ return carritoActualizado;
     );
   };
 
-  const puedeVerCategoria = (categoria: string) => {
-  if (!usuarioLogueado) return false;
-
-  if (usuarioLogueado.rol === 'Administrador') {
-    return true;
-  }
-
-  const permitidas = usuarioLogueado.categoriasPermitidas || ['*'];
-
-  if (permitidas.includes('*')) {
-    return true;
-  }
-
-  return permitidas.includes(categoria);
-};
 
 const productosFiltrados = catalogoProductos.filter(
   (p: ProductoCatalogo) =>
