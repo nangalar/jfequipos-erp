@@ -582,6 +582,7 @@ const [subiendoImagenEdicion, setSubiendoImagenEdicion] = useState(false);
   const [fPMayoreo, setFPMayoreo] = useState('');
   const [fPEspecial, setFPEspecial] = useState('');
   const [fManejaGarantia, setFManejaGarantia] = useState(true);
+  const [ventaProcesando, setVentaProcesando] = useState(false);
   const [fGarantia, setFGarantia] = useState('1 Año');
   const [fUnidad, setFUnidad] = useState('Pieza');
   const [fColor, setFColor] = useState('');
@@ -4456,6 +4457,7 @@ try {
   };
 
   const procesarVenta = async () => {
+    if (ventaProcesando) return;
     if (carrito.length === 0) return;
     if (!sucursalActivaPOS) {
       setMensajeNotif('Seleccione una sucursal activa antes de cobrar la venta.');
@@ -4507,6 +4509,7 @@ try {
 
     const folioTicket = `TICK-${Math.floor(100000 + Math.random() * 900000)}`;
 
+    setVentaProcesando(true);
     try {
       
       const { data, error } = await supabase.rpc('sale_create', {
@@ -4519,6 +4522,7 @@ try {
         p_quote_folio: cotizacionOrigenPOS || null
       });
       if (error) throw error;
+      
 
       const resultado = data as any;
       const ticketInfo: TicketGuardado = {
@@ -4553,11 +4557,13 @@ try {
       );
       setModalNotifAbierto(true);
     } catch (error: any) {
-      setVentaExitosa(false);
-      setMensajeNotif(`No fue posible registrar la venta: ${error?.message || String(error)}`);
-      setModalNotifAbierto(true);
-    }
-  };
+  setVentaExitosa(false);
+  setMensajeNotif(`No fue posible registrar la venta: ${error?.message || String(error)}`);
+  setModalNotifAbierto(true);
+} finally {
+  setVentaProcesando(false);
+}
+};
 
   const ejecutarDescargaTicketPDF = (ticket: TicketGuardado) => {
     const ventanaImpresion = window.open(
@@ -9456,8 +9462,8 @@ const inventarioPaginado = inventarioFiltradoUsuario.slice(
                       <button type="button" onClick={generarCotizacion} disabled={carrito.length === 0} className={`py-2.5 rounded-xl font-bold text-xs shadow-lg cursor-pointer ${carrito.length === 0 ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-500 text-white'}`}>
                         📄 Generar Cotización (48h)
                       </button>
-                      <button type="button" onClick={procesarVenta} disabled={carrito.length === 0} className={`py-2.5 rounded-xl font-bold text-xs shadow-lg cursor-pointer ${carrito.length === 0 ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}>
-                        💳 Cobrar Directo
+                      <button type="button" onClick={procesarVenta} disabled={carrito.length === 0 || ventaProcesando} className={`py-2.5 rounded-xl font-bold text-xs shadow-lg cursor-pointer ${carrito.length === 0 ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}>
+                        {ventaProcesando ? 'Procesando venta...' : '💳 Cobrar Directo'}
                       </button>
                     </div>
                   </div>
