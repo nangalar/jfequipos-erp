@@ -903,6 +903,51 @@ const historialVisibleUsuario = usuarioEsAdministrador
     is_package: prod.esPaqueteDefinido === true,
     package_components: prod.esPaqueteDefinido ? (prod.componentesPaquete || []) : []
   });
+const cargarTodoInventarioDb = async () => {
+  const tamanoPagina = 1000;
+  let desde = 0;
+  let todosLosRegistros: any[] = [];
+
+  while (true) {
+    const { data, error } = await supabase
+      .from('inventory')
+      .select(`
+        id,
+        product_id,
+        branch_id,
+        warehouse,
+        stock_current,
+        display_qty,
+        reserved_qty,
+        in_transit_qty,
+        consignment_qty,
+        damaged_qty,
+        min_qty,
+        max_qty,
+        branches(name)
+      `)
+      .order('id', { ascending: true })
+      .range(desde, desde + tamanoPagina - 1);
+
+    if (error) {
+      return { data: null, error };
+    }
+
+    const lote = data || [];
+    todosLosRegistros = [...todosLosRegistros, ...lote];
+
+    if (lote.length < tamanoPagina) {
+      break;
+    }
+
+    desde += tamanoPagina;
+  }
+
+  return {
+    data: todosLosRegistros,
+    error: null
+  };
+};
 
   const cargarProductosInventario = async () => {
     const [prodResp, catResp, invResp, kardexResp, seriesResp] = await Promise.all([
@@ -915,9 +960,8 @@ const historialVisibleUsuario = usuarioEsAdministrador
         .select('id, name, active')
         .eq('active', true)
         .order('name'),
-      supabase
-        .from('inventory')
-        .select('product_id, branch_id, warehouse, stock_current, display_qty, reserved_qty, in_transit_qty, consignment_qty, damaged_qty, min_qty, max_qty, branches(name)'),
+        
+        cargarTodoInventarioDb(),
       supabase
         .from('inventory_movements')
         .select('id, occurred_at, user_id, branch_id, warehouse, product_id, quantity, movement_type, stock_before, stock_after, cost, reason, notes, reference, branches(name), products(name), profiles(full_name)')
