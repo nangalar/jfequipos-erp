@@ -276,6 +276,16 @@ interface TicketGuardado {
   subtotalNeto: number;
   iva: number;
   total: number;
+  estatusVenta?: 'Activa' | 'Cancelada';
+canceladaEn?: string;
+canceladaPor?: string;
+motivoCancelacion?: string;
+notasCancelacion?: string;
+
+metodoPagoAnterior?: string;
+metodoPagoActualizadoEn?: string;
+metodoPagoActualizadoPor?: string;
+motivoCambioMetodoPago?: string;
 }
 
 interface UsuarioSistema {
@@ -583,6 +593,18 @@ const [subiendoImagenEdicion, setSubiendoImagenEdicion] = useState(false);
   const [fPEspecial, setFPEspecial] = useState('');
   const [fManejaGarantia, setFManejaGarantia] = useState(true);
   const [ventaProcesando, setVentaProcesando] = useState(false);
+  // Administración de ventas realizadas
+const [ventaSeleccionadaAdmin, setVentaSeleccionadaAdmin] = useState<TicketGuardado | null>(null);
+
+const [modalCancelarVentaAbierto, setModalCancelarVentaAbierto] = useState(false);
+const [motivoCancelacionVenta, setMotivoCancelacionVenta] = useState('Error de producto');
+const [notasCancelacionVenta, setNotasCancelacionVenta] = useState('');
+const [cancelacionVentaProcesando, setCancelacionVentaProcesando] = useState(false);
+
+const [modalCambiarPagoAbierto, setModalCambiarPagoAbierto] = useState(false);
+const [nuevoMetodoPagoVenta, setNuevoMetodoPagoVenta] = useState('');
+const [motivoCambioPagoVenta, setMotivoCambioPagoVenta] = useState('');
+const [cambioPagoProcesando, setCambioPagoProcesando] = useState(false);
   const [fGarantia, setFGarantia] = useState('1 Año');
   const [fUnidad, setFUnidad] = useState('Pieza');
   const [fColor, setFColor] = useState('');
@@ -960,7 +982,7 @@ const cargarTodoInventarioDb = async () => {
         .select('id, name, active')
         .eq('active', true)
         .order('name'),
-        
+
         cargarTodoInventarioDb(),
       supabase
         .from('inventory_movements')
@@ -1071,7 +1093,9 @@ const cargarTodoInventarioDb = async () => {
         .select(`
           id, folio, sold_at, branch_id, customer_id, customer_name,
           payment_method, subtotal_gross, discount_total, subtotal_net,
-          vat_included, total, quote_id,
+          vat_included, total, quote_id,status, cancelled_at, cancelled_by, cancellation_reason, cancellation_notes,
+          previous_payment_method, payment_method_updated_at, payment_method_updated_by,
+          payment_method_change_reason,
           branches(name),
           sale_items(
             id, line_id, product_id, sku, product_name, category,
@@ -1116,7 +1140,7 @@ folioVenta: ventaRelacionada?.folio ? String(ventaRelacionada.folio) : undefined
       };
     }).filter((q: Cotizacion) => Boolean(q.sucursal));
 
-    const ventasDb: TicketGuardado[] = (salesResp.data || []).map((v: any) => {
+    const ventasDb: TicketGuardado[] = (salesResp.data || []).map((v: any): TicketGuardado => {
       const sucRel = relacionUnicaDb(v.branches);
       const nombreSucursal = String(sucRel?.name || '');
       const items = Array.isArray(v.sale_items)
@@ -1135,7 +1159,25 @@ folioVenta: ventaRelacionada?.folio ? String(ventaRelacionada.folio) : undefined
         descuentoTotal: Number(v.discount_total || 0),
         subtotalNeto: Number(v.subtotal_net || 0),
         iva: Number(v.vat_included || 0),
-        total: Number(v.total || 0)
+        total: Number(v.total || 0),
+        estatusVenta: v.status === 'Cancelada' ? 'Cancelada' : 'Activa',
+canceladaEn: v.cancelled_at ? String(v.cancelled_at) : undefined,
+canceladaPor: v.cancelled_by ? String(v.cancelled_by) : undefined,
+motivoCancelacion: v.cancellation_reason ? String(v.cancellation_reason) : undefined,
+notasCancelacion: v.cancellation_notes ? String(v.cancellation_notes) : undefined,
+
+metodoPagoAnterior: v.previous_payment_method
+  ? String(v.previous_payment_method)
+  : undefined,
+metodoPagoActualizadoEn: v.payment_method_updated_at
+  ? String(v.payment_method_updated_at)
+  : undefined,
+metodoPagoActualizadoPor: v.payment_method_updated_by
+  ? String(v.payment_method_updated_by)
+  : undefined,
+motivoCambioMetodoPago: v.payment_method_change_reason
+  ? String(v.payment_method_change_reason)
+  : undefined,
       };
     }).filter((v: TicketGuardado) => Boolean(v.sucursal));
 
@@ -4609,7 +4651,156 @@ try {
 }
 };
 
-  const ejecutarDescargaTicketPDF = (ticket: TicketGuardado) => {
+const cambiarMetodoPagoAdministracion = async () => {
+  if (!usuarioEsAdministrador) {
+    setVentaExitosa(false);
+    setMensajeNotif('Solo la Administradora puede cambiar la forma de pago.');
+    setModalNotifAbierto(true);
+    return;
+  }
+
+  if (!ventaSeleccionadaAdmin?.idDb) {
+    setVentaExitosa(false);
+    setMensajeNotif('No se pudo identificar la venta.');
+    setModalNotifAbierto(true);
+    return;
+  }
+
+  if (ventaSeleccionadaAdmin.estatusVenta === 'Cancelada') {
+    setVentaExitosa(false);
+    setMensajeNotif('No se puede modificar una venta cancelada.');
+    setModalNotifAbierto(true);
+    return;
+  }
+
+  if (!nuevoMetodoPagoVenta.trim()) {
+    setVentaExitosa(false);
+    setMensajeNotif('Debes seleccionar la nueva forma de pago.');
+    setModalNotifAbierto(true);
+    return;
+  }
+
+  if (nuevoMetodoPagoVenta === ventaSeleccionadaAdmin.metodoPago) {
+    setVentaExitosa(false);
+    setMensajeNotif('La nueva forma de pago es igual a la actual.');
+    setModalNotifAbierto(true);
+    return;
+  }
+
+  if (!motivoCambioPagoVenta.trim()) {
+    setVentaExitosa(false);
+    setMensajeNotif('Debes escribir el motivo del cambio de forma de pago.');
+    setModalNotifAbierto(true);
+    return;
+  }
+
+  if (cambioPagoProcesando) return;
+
+  try {
+    setCambioPagoProcesando(true);
+
+    const { error } = await supabase.rpc('sale_change_payment_method', {
+      p_sale_id: ventaSeleccionadaAdmin.idDb,
+      p_new_payment_method: nuevoMetodoPagoVenta.trim(),
+      p_reason: motivoCambioPagoVenta.trim()
+    });
+
+    if (error) throw error;
+
+    const folioActualizado = ventaSeleccionadaAdmin.folio;
+
+    await cargarVentasCotizaciones();
+
+    setModalCambiarPagoAbierto(false);
+    setVentaSeleccionadaAdmin(null);
+    setNuevoMetodoPagoVenta('');
+    setMotivoCambioPagoVenta('');
+
+    setVentaExitosa(true);
+    setMensajeNotif(
+      `Forma de pago de la venta ${folioActualizado} actualizada correctamente.`
+    );
+    setModalNotifAbierto(true);
+  } catch (error: any) {
+    setVentaExitosa(false);
+    setMensajeNotif(
+      `No fue posible cambiar la forma de pago: ${error?.message || String(error)}`
+    );
+    setModalNotifAbierto(true);
+  } finally {
+    setCambioPagoProcesando(false);
+  }
+};
+const cancelarVentaAdministracion = async () => {
+  if (!usuarioEsAdministrador) {
+    setVentaExitosa(false);
+    setMensajeNotif('Solo la Administradora puede cancelar ventas.');
+    setModalNotifAbierto(true);
+    return;
+  }
+
+  if (!ventaSeleccionadaAdmin?.idDb) {
+    setVentaExitosa(false);
+    setMensajeNotif('No se pudo identificar la venta que se desea cancelar.');
+    setModalNotifAbierto(true);
+    return;
+  }
+
+  if (ventaSeleccionadaAdmin.estatusVenta === 'Cancelada') {
+    setVentaExitosa(false);
+    setMensajeNotif('Esta venta ya se encuentra cancelada.');
+    setModalNotifAbierto(true);
+    return;
+  }
+
+  if (!motivoCancelacionVenta.trim()) {
+    setVentaExitosa(false);
+    setMensajeNotif('Debes seleccionar un motivo de cancelación.');
+    setModalNotifAbierto(true);
+    return;
+  }
+
+  if (cancelacionVentaProcesando) return;
+
+  try {
+    setCancelacionVentaProcesando(true);
+
+    const { error } = await supabase.rpc('sale_cancel', {
+      p_sale_id: ventaSeleccionadaAdmin.idDb,
+      p_reason: motivoCancelacionVenta.trim(),
+      p_notes: notasCancelacionVenta.trim()
+    });
+
+    if (error) throw error;
+
+    await Promise.all([
+      cargarVentasCotizaciones(),
+      cargarProductosInventario()
+    ]);
+
+    const folioCancelado = ventaSeleccionadaAdmin.folio;
+
+    setModalCancelarVentaAbierto(false);
+    setVentaSeleccionadaAdmin(null);
+    setMotivoCancelacionVenta('Error de producto');
+    setNotasCancelacionVenta('');
+
+    setVentaExitosa(true);
+    setMensajeNotif(
+      `Venta ${folioCancelado} cancelada correctamente. El inventario fue regresado automáticamente a su sucursal de origen.`
+    );
+    setModalNotifAbierto(true);
+  } catch (error: any) {
+    setVentaExitosa(false);
+    setMensajeNotif(
+      `No fue posible cancelar la venta: ${error?.message || String(error)}`
+    );
+    setModalNotifAbierto(true);
+  } finally {
+    setCancelacionVentaProcesando(false);
+  }
+};  
+const ejecutarDescargaTicketPDF = (ticket: TicketGuardado) => {
     const ventanaImpresion = window.open(
   '',
   '_blank',
@@ -9390,7 +9581,7 @@ const inventarioPaginado = inventarioFiltradoUsuario.slice(
                                       } else {
                                         agregarAlCarrito(prod, false, stockSuc, '');
                                       }
-                                    }} className="bg-blue-600 text-white px-3 py-1 rounded-lg text-xs font-bold cursor-pointer">+ Venta</button>
+                                    }} className="block w-full mb-1 bg-blue-600 text-white px-2 py-1 rounded-lg text-xs font-bold cursor-pointer">+ Venta</button>
                                     <button type="button" onClick={() => {
                                       if (stockSuc <= 0) {
                                         setMensajeSinStock(`El producto "${prod.nombre}" no cuenta con stock disponible en ${sucursalActivaPOS}.`);
@@ -9402,7 +9593,7 @@ const inventarioPaginado = inventarioFiltradoUsuario.slice(
                                       } else {
                                         agregarAlCarrito(prod, true, stockSuc, '');
                                       }
-                                    }} className="bg-amber-600 text-white px-3 py-1 rounded-lg text-xs font-bold cursor-pointer">🎁 Regalo</button>
+                                    }} className="block w-full bg-amber-600 text-white px-2 py-1 rounded-lg text-xs font-bold cursor-pointer">🎁 Regalo</button>
                                   </>
                                 )}
                               </td>
@@ -9750,16 +9941,273 @@ const inventarioPaginado = inventarioFiltradoUsuario.slice(
             </div>
           )}
 
-          {/* MODAL NOTIFICACIÓN INTERNA */}
-          {modalNotifAbierto && (
-            <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-              <div className="bg-slate-900 border border-emerald-500 rounded-2xl p-6 max-w-sm w-full shadow-2xl text-center space-y-4">
-                <h3 className="text-lg font-bold text-emerald-400">✅ Operación Exitosa</h3>
-                <p className="text-xs text-slate-300">{mensajeNotif}</p>
-                <button type="button" onClick={() => setModalNotifAbierto(false)} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-6 py-2 rounded-xl text-xs w-full cursor-pointer">Aceptar</button>
-              </div>
-            </div>
-          )}
+          {/* MODAL CAMBIAR FORMA DE PAGO - SOLO ADMINISTRACIÓN */}
+{modalCambiarPagoAbierto && ventaSeleccionadaAdmin && (
+  <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+    <div className="bg-slate-900 border border-amber-500 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-5">
+
+      <div>
+        <h3 className="text-lg font-bold text-amber-400">
+          Cambiar forma de pago
+        </h3>
+
+        <p className="text-xs text-slate-400 mt-1">
+          Este cambio quedará registrado para auditoría.
+        </p>
+      </div>
+
+      <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs space-y-1">
+        <p>
+          <span className="text-slate-500">Folio:</span>{' '}
+          <span className="text-white font-bold">
+            {ventaSeleccionadaAdmin.folio}
+          </span>
+        </p>
+
+        <p>
+          <span className="text-slate-500">Cliente:</span>{' '}
+          <span className="text-white">
+            {ventaSeleccionadaAdmin.cliente}
+          </span>
+        </p>
+
+        <p>
+          <span className="text-slate-500">Forma de pago actual:</span>{' '}
+          <span className="text-amber-400 font-bold">
+            {ventaSeleccionadaAdmin.metodoPago}
+          </span>
+        </p>
+
+        <p>
+          <span className="text-slate-500">Total:</span>{' '}
+          <span className="text-emerald-400 font-bold">
+            {formatearMoneda(ventaSeleccionadaAdmin.total)}
+          </span>
+        </p>
+      </div>
+
+      <div>
+        <label className="block text-xs font-bold text-slate-300 mb-2">
+          Nueva forma de pago
+        </label>
+
+        <select
+          value={nuevoMetodoPagoVenta}
+          onChange={(e) => setNuevoMetodoPagoVenta(e.target.value)}
+          disabled={cambioPagoProcesando}
+          className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white"
+        >
+          <option value="">Seleccionar...</option>
+          <option value="Efectivo">Efectivo</option>
+          <option value="Tarjeta de Crédito">Tarjeta de Crédito</option>
+          <option value="Tarjeta de Débito">Tarjeta de Débito</option>
+          <option value="Transferencia SPEI">Transferencia SPEI</option>
+          <option value="Crédito">Crédito</option>
+        </select>
+      </div>
+
+      <div>
+        <label className="block text-xs font-bold text-slate-300 mb-2">
+          Motivo del cambio
+        </label>
+
+        <textarea
+          value={motivoCambioPagoVenta}
+          onChange={(e) => setMotivoCambioPagoVenta(e.target.value)}
+          disabled={cambioPagoProcesando}
+          rows={3}
+          placeholder="Ejemplo: se capturó efectivo pero el cliente pagó por transferencia..."
+          className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white resize-none"
+        />
+      </div>
+
+      <div className="bg-amber-950/30 border border-amber-900 rounded-xl p-3">
+        <p className="text-xs text-amber-300">
+          La venta no se eliminará ni cambiará su inventario. Solo se actualizará
+          la forma de pago y quedará registrado el motivo del cambio.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <button
+          type="button"
+          disabled={cambioPagoProcesando}
+          onClick={() => {
+            setModalCambiarPagoAbierto(false);
+            setVentaSeleccionadaAdmin(null);
+            setNuevoMetodoPagoVenta('');
+            setMotivoCambioPagoVenta('');
+          }}
+          className="bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-xl text-xs"
+        >
+          Regresar
+        </button>
+
+        <button
+          type="button"
+          disabled={cambioPagoProcesando}
+          onClick={cambiarMetodoPagoAdministracion}
+          className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-xl text-xs"
+        >
+          {cambioPagoProcesando
+            ? 'Actualizando...'
+            : 'Confirmar cambio'}
+        </button>
+      </div>
+
+    </div>
+  </div>
+)}
+          {/* MODAL CANCELAR VENTA - SOLO ADMINISTRACIÓN */}
+{modalCancelarVentaAbierto && ventaSeleccionadaAdmin && (
+  <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+    <div className="bg-slate-900 border border-red-500 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-5">
+
+      <div>
+        <h3 className="text-lg font-bold text-red-400">
+          Cancelar venta
+        </h3>
+
+        <p className="text-xs text-slate-400 mt-1">
+          Esta operación devolverá automáticamente el inventario a la sucursal
+          de donde salió la venta.
+        </p>
+      </div>
+
+      <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs space-y-1">
+        <p>
+          <span className="text-slate-500">Folio:</span>{' '}
+          <span className="text-white font-bold">
+            {ventaSeleccionadaAdmin.folio}
+          </span>
+        </p>
+
+        <p>
+          <span className="text-slate-500">Cliente:</span>{' '}
+          <span className="text-white">
+            {ventaSeleccionadaAdmin.cliente}
+          </span>
+        </p>
+
+        <p>
+          <span className="text-slate-500">Sucursal:</span>{' '}
+          <span className="text-white">
+            {ventaSeleccionadaAdmin.sucursal}
+          </span>
+        </p>
+
+        <p>
+          <span className="text-slate-500">Total:</span>{' '}
+          <span className="text-emerald-400 font-bold">
+            {formatearMoneda(ventaSeleccionadaAdmin.total)}
+          </span>
+        </p>
+      </div>
+
+      <div>
+        <label className="block text-xs font-bold text-slate-300 mb-2">
+          Motivo de cancelación
+        </label>
+
+        <select
+          value={motivoCancelacionVenta}
+          onChange={(e) => setMotivoCancelacionVenta(e.target.value)}
+          disabled={cancelacionVentaProcesando}
+          className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white"
+        >
+          <option value="Error de producto">Error de producto</option>
+          <option value="Devolución">Devolución</option>
+          <option value="Venta duplicada">Venta duplicada</option>
+          <option value="Error en captura">Error en captura</option>
+          <option value="Otro">Otro</option>
+        </select>
+      </div>
+
+      <div>
+        <label className="block text-xs font-bold text-slate-300 mb-2">
+          Explicación / notas
+        </label>
+
+        <textarea
+          value={notasCancelacionVenta}
+          onChange={(e) => setNotasCancelacionVenta(e.target.value)}
+          disabled={cancelacionVentaProcesando}
+          rows={4}
+          placeholder="Describe brevemente por qué se cancela esta venta..."
+          className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white resize-none"
+        />
+      </div>
+
+      <div className="bg-red-950/30 border border-red-900 rounded-xl p-3">
+        <p className="text-xs text-red-300">
+          La venta permanecerá en el historial marcada como CANCELADA. No se
+          eliminará el registro de auditoría.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <button
+          type="button"
+          disabled={cancelacionVentaProcesando}
+          onClick={() => {
+            setModalCancelarVentaAbierto(false);
+            setVentaSeleccionadaAdmin(null);
+            setNotasCancelacionVenta('');
+            setMotivoCancelacionVenta('Error de producto');
+          }}
+          className="bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-xl text-xs"
+        >
+          Regresar
+        </button>
+
+        <button
+          type="button"
+          disabled={cancelacionVentaProcesando}
+          onClick={cancelarVentaAdministracion}
+          className="bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-xl text-xs"
+        >
+          {cancelacionVentaProcesando
+            ? 'Cancelando...'
+            : 'Confirmar cancelación'}
+        </button>
+      </div>
+
+    </div>
+  </div>
+)}
+        {modalNotifAbierto && (
+  <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+    <div
+      className={`bg-slate-900 border rounded-2xl p-6 max-w-sm w-full shadow-2xl text-center space-y-4 ${
+        ventaExitosa ? 'border-emerald-500' : 'border-amber-500'
+      }`}
+    >
+      <h3
+        className={`text-lg font-bold ${
+          ventaExitosa ? 'text-emerald-400' : 'text-amber-400'
+        }`}
+      >
+        {ventaExitosa ? '✅ Operación Exitosa' : '⚠️ Atención'}
+      </h3>
+
+      <p className="text-xs text-slate-300">
+        {mensajeNotif}
+      </p>
+
+      <button
+        type="button"
+        onClick={() => setModalNotifAbierto(false)}
+        className={`text-white font-bold px-6 py-2 rounded-xl text-xs w-full cursor-pointer ${
+          ventaExitosa
+            ? 'bg-emerald-600 hover:bg-emerald-500'
+            : 'bg-amber-600 hover:bg-amber-500'
+        }`}
+      >
+        Aceptar
+      </button>
+    </div>
+  </div>
+)}
 
           {/* HISTORIAL */}
           {moduloActivo === 'historial' && verificarPermisoModulo('historial') && (
@@ -9790,10 +10238,53 @@ const inventarioPaginado = inventarioFiltradoUsuario.slice(
                             <td className="p-4 text-amber-400 text-xs">{t.metodoPago}</td>
                             <td className="p-4 text-emerald-400 font-bold text-xs">{formatearMoneda(t.total)}</td>
                             <td className="p-4 text-center">
-                              <button type="button" onClick={() => ejecutarDescargaTicketPDF(t)} className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-1.5 rounded-lg text-xs font-bold cursor-pointer">
-                                📥 Descargar PDF
-                              </button>
-                            </td>
+  <div className="flex flex-col items-center gap-2">
+
+    <button
+      type="button"
+      onClick={() => ejecutarDescargaTicketPDF(t)}
+      className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 py-2 rounded-lg text-xs"
+    >
+      📥 Descargar PDF
+    </button>
+
+{usuarioEsAdministrador && t.estatusVenta !== 'Cancelada' && (
+  <button
+    type="button"
+    onClick={() => {
+      setVentaSeleccionadaAdmin(t);
+      setNuevoMetodoPagoVenta('');
+      setMotivoCambioPagoVenta('');
+      setModalCambiarPagoAbierto(true);
+    }}
+    className="bg-amber-600 hover:bg-amber-500 text-white font-bold px-3 py-2 rounded-lg text-xs"
+  >
+    💳 Cambiar forma de pago
+  </button>
+)}
+    {usuarioEsAdministrador && t.estatusVenta !== 'Cancelada' && (
+      <button
+        type="button"
+        onClick={() => {
+          setVentaSeleccionadaAdmin(t);
+          setMotivoCancelacionVenta('Error de producto');
+          setNotasCancelacionVenta('');
+          setModalCancelarVentaAbierto(true);
+        }}
+        className="bg-red-700 hover:bg-red-600 text-white font-bold px-3 py-2 rounded-lg text-xs"
+      >
+        🚫 Cancelar venta
+      </button>
+    )}
+
+    {t.estatusVenta === 'Cancelada' && (
+      <span className="bg-red-950 border border-red-700 text-red-300 font-bold px-3 py-1 rounded-lg text-[10px]">
+        CANCELADA
+      </span>
+    )}
+
+  </div>
+</td>
                           </tr>
                         ))}
                       </tbody>
