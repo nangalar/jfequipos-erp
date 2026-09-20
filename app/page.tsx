@@ -10116,9 +10116,11 @@ const inventarioPaginado = inventarioFiltradoUsuario.slice(
           className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white"
         >
           <option value="Error de producto">Error de producto</option>
-          <option value="Devolución">Devolución</option>
+          <option value="Error de cantidad">Error de cantidad</option>
+          <option value="Error de cobro">Error de cobro</option>
           <option value="Venta duplicada">Venta duplicada</option>
-          <option value="Error en captura">Error en captura</option>
+          <option value="Devolución">Devolución</option>
+          <option value="Error de cliente">Error de cliente</option>
           <option value="Otro">Otro</option>
         </select>
       </div>
