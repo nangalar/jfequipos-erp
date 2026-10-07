@@ -270,6 +270,7 @@ interface TicketGuardado {
   cliente: string;
   metodoPago: string;
   sucursal: string;
+  vendedor?: string;
   items: ItemVenta[];
   subtotalBruto: number;
   descuentoTotal: number;
@@ -1093,10 +1094,11 @@ const cargarTodoInventarioDb = async () => {
         .select(`
           id, folio, sold_at, branch_id, customer_id, customer_name,
           payment_method, subtotal_gross, discount_total, subtotal_net,
-          vat_included, total, quote_id,status, cancelled_at, cancelled_by, cancellation_reason, cancellation_notes,
+          vat_included, total, quote_id, created_by, status, cancelled_at, cancelled_by, cancellation_reason, cancellation_notes,
           previous_payment_method, payment_method_updated_at, payment_method_updated_by,
           payment_method_change_reason,
           branches(name),
+          profiles!sales_created_by_fkey(full_name),
           sale_items(
             id, line_id, product_id, sku, product_name, category,
             unit_price, unit_cost, quantity, requires_serial, serial_number,
@@ -1143,6 +1145,8 @@ folioVenta: ventaRelacionada?.folio ? String(ventaRelacionada.folio) : undefined
     const ventasDb: TicketGuardado[] = (salesResp.data || []).map((v: any): TicketGuardado => {
       const sucRel = relacionUnicaDb(v.branches);
       const nombreSucursal = String(sucRel?.name || '');
+      const vendedorRel = relacionUnicaDb(v.profiles);
+      const nombreVendedor = String(vendedorRel?.full_name || 'Usuario no identificado');
       const items = Array.isArray(v.sale_items)
         ? v.sale_items.map((it: any) => mapearItemOperacionDb(it, nombreSucursal))
         : [];
@@ -1154,6 +1158,7 @@ folioVenta: ventaRelacionada?.folio ? String(ventaRelacionada.folio) : undefined
         cliente: String(v.customer_name || 'Público General'),
         metodoPago: String(v.payment_method || ''),
         sucursal: nombreSucursal,
+        vendedor: nombreVendedor,
         items,
         subtotalBruto: Number(v.subtotal_gross || 0),
         descuentoTotal: Number(v.discount_total || 0),
@@ -5421,9 +5426,11 @@ const ventasPeriodoReporte = ticketsPeriodoReporte.reduce(
           sum +
           Math.max(
             0,
-            Number(item.precio || 0) *
-              Number(item.cantidadVendida || 0) -
+            (
+              Number(item.precio || 0) -
               Number(item.descuentoMontoFijo || 0)
+            ) *
+              Number(item.cantidadVendida || 0)
           ),
         0
       ),
@@ -5446,9 +5453,11 @@ const efectivoPeriodoReporte = ticketsPeriodoReporte
           sum +
           Math.max(
             0,
-            Number(item.precio || 0) *
-              Number(item.cantidadVendida || 0) -
+            (
+              Number(item.precio || 0) -
               Number(item.descuentoMontoFijo || 0)
+            ) *
+              Number(item.cantidadVendida || 0)
           ),
         0
       );
@@ -5518,18 +5527,23 @@ const resultadoDespuesGastosPeriodo =
     ticket.items
       .filter((item: ItemVenta) => categoriaReporte === 'Todas' || item.categoria === categoriaReporte)
       .map((item: ItemVenta) => {
-        const cantidad = Number(item.cantidadVendida || 0);
-        const precioUnitario = Number(item.precio || 0);
-        const descuento = Number(item.descuentoMontoFijo || 0);
-        const ventaLinea = Math.max(0, (precioUnitario * cantidad) - descuento);
-        const costoUnitario = Number(item.costo || 0);
-        const costoTotal = costoUnitario * cantidad;
-        const utilidadLinea = ventaLinea - costoTotal;
+       const cantidad = Number(item.cantidadVendida || 0);
+       const precioUnitario = Number(item.precio || 0);
+       const descuentoUnitario = Number(item.descuentoMontoFijo || 0);
+       const descuento = descuentoUnitario * cantidad;
+       const ventaLinea = Math.max(
+  0,
+  (precioUnitario - descuentoUnitario) * cantidad
+);
+       const costoUnitario = Number(item.costo || 0);
+       const costoTotal = costoUnitario * cantidad;
+       const utilidadLinea = ventaLinea - costoTotal;
         return {
           folio: ticket.folio,
           fecha: fechaTicketYmd(ticket),
           cliente: ticket.cliente || 'Público General',
           sucursal: ticket.sucursal,
+          vendedor: ticket.vendedor || 'Usuario no identificado',
           metodoPago: ticket.metodoPago,
           codigo: item.codigo || '',
           producto: item.nombre,
@@ -5670,13 +5684,13 @@ const detalleVentasReportePaginado =
     }
 
     const encabezadosDetalle = [
-      'Fecha','Folio','Sucursal','Cliente','Método de Pago','SKU','Producto','Categoría',
-      'Cantidad','Precio Unitario','Descuento','Venta Neta','Costo Unitario',
-      'Costo Total','Utilidad de Venta','Número de Serie'
-    ];
+  'Fecha','Folio','Sucursal','Vendedor','Cliente','Método de Pago','SKU','Producto','Categoría',
+  'Cantidad','Precio Unitario','Descuento','Venta Neta','Costo Unitario',
+  'Costo Total','Utilidad de Venta','Número de Serie'
+];
 
     const filasDetalle = detalleVentasReporte.map(r => [
-      r.fecha, r.folio, r.sucursal, r.cliente, r.metodoPago, r.codigo, r.producto, r.categoria,
+  r.fecha, r.folio, r.sucursal, r.vendedor, r.cliente, r.metodoPago, r.codigo, r.producto, r.categoria,
       r.cantidad, r.precioUnitario.toFixed(2), r.descuento.toFixed(2), r.ventaLinea.toFixed(2),
       r.costoUnitario.toFixed(2), r.costoTotal.toFixed(2), r.utilidadLinea.toFixed(2), r.serie
     ].map(escaparCsv).join(','));
@@ -5738,6 +5752,7 @@ const detalleVentasReportePaginado =
         <td>${escaparHtml(r.fecha)}</td>
         <td>${escaparHtml(r.folio)}</td>
         <td>${escaparHtml(r.sucursal)}</td>
+        <td>${escaparHtml(r.vendedor)}</td>
         <td>${escaparHtml(r.producto)}</td>
         <td>${escaparHtml(r.codigo)}</td>
         <td style="text-align:right">${r.cantidad}</td>
@@ -5833,7 +5848,7 @@ const detalleVentasReportePaginado =
         <table>
           <thead>
             <tr>
-              <th>Fecha</th><th>Folio</th><th>Sucursal</th><th>Producto</th><th>SKU</th>
+              <th>Fecha</th><th>Folio</th><th>Sucursal</th><th>Vendedor</th><th>Producto</th><th>SKU</th>
               <th>Cant.</th><th>Precio Unit.</th><th>Venta Neta</th><th>Costo Unit.</th>
               <th>Costo Total</th><th>Utilidad</th>
             </tr>
