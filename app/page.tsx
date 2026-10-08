@@ -262,6 +262,23 @@ folioVenta?: string;
   estatus: 'Pendiente' | 'Autorizada' | 'Expirada';
 }
 
+interface CorteCajaPreview {
+  closing_date: string;
+  branch_id: number;
+  user_id: string;
+
+  sales_count: number;
+
+  total_sales: number;
+  cash_sales: number;
+  transfer_sales: number;
+  credit_card_sales: number;
+  debit_card_sales: number;
+  credit_sales: number;
+  other_sales: number;
+
+  expected_cash: number;
+}
 interface TicketGuardado {
   idDb?: number;
   folio: string;
@@ -336,6 +353,7 @@ const LISTA_MODULOS_DISPONIBLES = [
   { id: 'auditoria', nombre: '📋 Auditoría de Inventarios' },
   { id: 'cotizaciones', nombre: '📄 Cotizaciones (48h)' },
   { id: 'ventas', nombre: '💰 Ventas' },
+  { id: 'corte-caja', nombre: '💵 Corte de Caja Diario' },
   { id: 'reportes', nombre: '📈 Reportes Financieros' },
   { id: 'historial', nombre: '📋 Historial y Reimpresión' },
   { id: 'usuarios', nombre: '🔒 Gestión de Usuarios y Roles' }
@@ -532,6 +550,20 @@ const [busquedaInventarioLista, setBusquedaInventarioLista] = useState<string>('
   const [audResp, setAudResp] = useState('');
   const [audObs, setAudObs] = useState('');
 
+  // Corte de Caja Diario
+const [fechaCorteCaja, setFechaCorteCaja] = useState<string>(
+  new Date().toISOString().split('T')[0]
+);
+
+const [corteCajaPreview, setCorteCajaPreview] = useState<CorteCajaPreview | null>(null);
+
+const [efectivoEntregadoCorte, setEfectivoEntregadoCorte] = useState<string>('');
+
+const [notasCorteCaja, setNotasCorteCaja] = useState<string>('');
+
+const [cargandoCorteCaja, setCargandoCorteCaja] = useState<boolean>(false);
+
+const [corteCajaGuardado, setCorteCajaGuardado] = useState<boolean>(false);
   // Reportes
   const [fechaInicioReporte, setFechaInicioReporte] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]);
   const [fechaFinReporte, setFechaFinReporte] = useState(new Date().toISOString().split('T')[0]);
@@ -1071,6 +1103,100 @@ const cargarTodoInventarioDb = async () => {
     }
   };
 
+  const cargarPreviewCorteCaja = async () => {
+  if (!usuarioLogueado) return;
+
+  const branchId = usuarioLogueado.sucursalId;
+
+  if (!branchId) {
+    setMensajeNotif('El usuario no tiene una sucursal asignada.');
+    setModalNotifAbierto(true);
+    return;
+  }
+
+  try {
+    setCargandoCorteCaja(true);
+    setCorteCajaGuardado(false);
+
+    const { data, error } = await supabase.rpc('cash_closing_preview', {
+      p_closing_date: fechaCorteCaja,
+      p_branch_id: branchId,
+      p_user_id: null
+    });
+
+    if (error) throw error;
+
+    setCorteCajaPreview(data as CorteCajaPreview);
+  } catch (error: any) {
+    setCorteCajaPreview(null);
+    setMensajeNotif(
+      `No fue posible calcular el corte: ${error?.message || String(error)}`
+    );
+    setModalNotifAbierto(true);
+  } finally {
+    setCargandoCorteCaja(false);
+  }
+};
+const guardarCorteCaja = async () => {
+  if (!usuarioLogueado) return;
+
+  const branchId = usuarioLogueado.sucursalId;
+
+  if (!branchId) {
+    setMensajeNotif('El usuario no tiene una sucursal asignada.');
+    setModalNotifAbierto(true);
+    return;
+  }
+
+  if (!corteCajaPreview) {
+    setMensajeNotif('Primero calcula el corte del día.');
+    setModalNotifAbierto(true);
+    return;
+  }
+
+  const efectivoEntregado = Number(efectivoEntregadoCorte);
+
+  if (Number.isNaN(efectivoEntregado) || efectivoEntregado < 0) {
+    setMensajeNotif('Capture un monto válido de efectivo entregado.');
+    setModalNotifAbierto(true);
+    return;
+  }
+
+  try {
+    setCargandoCorteCaja(true);
+
+    const { data, error } = await supabase.rpc('cash_closing_create', {
+      p_closing_date: fechaCorteCaja,
+      p_branch_id: branchId,
+      p_delivered_cash: efectivoEntregado,
+      p_notes: notasCorteCaja.trim() || null,
+      p_user_id: null
+    });
+
+    if (error) throw error;
+
+    const resultado = data as any;
+
+    setCorteCajaGuardado(true);
+
+    setMensajeNotif(
+      `Corte guardado correctamente. ` +
+      `Efectivo esperado: ${formatearMoneda(Number(resultado?.expected_cash || 0))}. ` +
+      `Efectivo entregado: ${formatearMoneda(Number(resultado?.delivered_cash || 0))}. ` +
+      `Diferencia: ${formatearMoneda(Number(resultado?.difference || 0))}. ` +
+      `Estado: ${String(resultado?.status || '')}.`
+    );
+
+    setModalNotifAbierto(true);
+  } catch (error: any) {
+    setMensajeNotif(
+      `No fue posible guardar el corte: ${error?.message || String(error)}`
+    );
+    setModalNotifAbierto(true);
+  } finally {
+    setCargandoCorteCaja(false);
+  }
+};
   const cargarVentasCotizaciones = async () => {
     const [quotesResp, salesResp] = await Promise.all([
       supabase
@@ -6401,6 +6527,19 @@ const inventarioPaginado = inventarioFiltradoUsuario.slice(
             {verificarPermisoModulo('ventas') && (
               <button type="button" onClick={() => setModuloActivo('ventas')} className={`w-full text-left px-4 py-2.5 rounded-xl font-medium text-xs cursor-pointer ${moduloActivo === 'ventas' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}>💰 Ventas</button>
             )}
+            {verificarPermisoModulo('corte-caja') && (
+  <button
+    type="button"
+    onClick={() => setModuloActivo('corte-caja')}
+    className={`w-full text-left px-4 py-2.5 rounded-xl font-medium text-xs cursor-pointer ${
+      moduloActivo === 'corte-caja'
+        ? 'bg-blue-600 text-white shadow-lg'
+        : 'text-slate-400 hover:bg-slate-800'
+    }`}
+  >
+    💵 Corte de Caja Diario
+  </button>
+)}
             {verificarPermisoModulo('reportes') && (
               <button type="button" onClick={() => setModuloActivo('reportes')} className={`w-full text-left px-4 py-2.5 rounded-xl font-medium text-xs cursor-pointer ${moduloActivo === 'reportes' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}>📈 Reportes Financieros</button>
             )}
@@ -9721,6 +9860,167 @@ const inventarioPaginado = inventarioFiltradoUsuario.slice(
               </div>
             </div>
           )}
+{/* MÓDULO DE CORTE DE CAJA DIARIO */}
+{moduloActivo === 'corte-caja' && verificarPermisoModulo('corte-caja') && (
+  <div className="space-y-6">
+    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      <div>
+        <h3 className="text-xl font-bold text-white">💵 Corte de Caja Diario</h3>
+        <p className="text-slate-400 text-sm mt-1">
+          Calcula las ventas del usuario, el efectivo esperado y registra cuánto dinero entrega físicamente.
+        </p>
+      </div>
+    </div>
+
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-5">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div>
+          <label className="block text-xs text-slate-400 mb-1">Usuario</label>
+          <div className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white text-sm">
+            {usuarioLogueado.nombre}
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs text-slate-400 mb-1">Sucursal</label>
+          <div className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white text-sm">
+            {nombreSucursalAsignadaUsuario || 'Sin sucursal asignada'}
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs text-slate-400 mb-1">Fecha del corte</label>
+          <input
+            type="date"
+            value={fechaCorteCaja}
+            onChange={(e) => {
+              setFechaCorteCaja(e.target.value);
+              setCorteCajaPreview(null);
+              setCorteCajaGuardado(false);
+            }}
+            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white text-sm"
+          />
+        </div>
+      </div>
+
+      <div>
+        <button
+          type="button"
+          onClick={cargarPreviewCorteCaja}
+          disabled={cargandoCorteCaja}
+          className="bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 text-white font-bold px-5 py-2.5 rounded-xl text-xs cursor-pointer disabled:cursor-not-allowed"
+        >
+          {cargandoCorteCaja ? 'Calculando...' : 'Calcular corte del día'}
+        </button>
+      </div>
+
+      {corteCajaPreview && (
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-slate-950 border border-slate-800 rounded-xl p-4">
+              <p className="text-[11px] text-slate-400 uppercase">Ventas</p>
+              <p className="text-xl font-black text-white mt-1">
+                {corteCajaPreview.sales_count}
+              </p>
+            </div>
+
+            <div className="bg-slate-950 border border-slate-800 rounded-xl p-4">
+              <p className="text-[11px] text-slate-400 uppercase">Total vendido</p>
+              <p className="text-xl font-black text-emerald-400 mt-1">
+                {formatearMoneda(corteCajaPreview.total_sales)}
+              </p>
+            </div>
+
+            <div className="bg-slate-950 border border-slate-800 rounded-xl p-4">
+              <p className="text-[11px] text-slate-400 uppercase">Efectivo esperado</p>
+              <p className="text-xl font-black text-amber-400 mt-1">
+                {formatearMoneda(corteCajaPreview.expected_cash)}
+              </p>
+            </div>
+
+            <div className="bg-slate-950 border border-slate-800 rounded-xl p-4">
+              <p className="text-[11px] text-slate-400 uppercase">Transferencias</p>
+              <p className="text-xl font-black text-blue-400 mt-1">
+                {formatearMoneda(corteCajaPreview.transfer_sales)}
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+            <div className="bg-slate-950 border border-slate-800 rounded-xl p-4">
+              <span className="text-slate-400">Efectivo</span>
+              <p className="text-white font-bold mt-1">
+                {formatearMoneda(corteCajaPreview.cash_sales)}
+              </p>
+            </div>
+
+            <div className="bg-slate-950 border border-slate-800 rounded-xl p-4">
+              <span className="text-slate-400">Tarjeta Crédito</span>
+              <p className="text-white font-bold mt-1">
+                {formatearMoneda(corteCajaPreview.credit_card_sales)}
+              </p>
+            </div>
+
+            <div className="bg-slate-950 border border-slate-800 rounded-xl p-4">
+              <span className="text-slate-400">Tarjeta Débito</span>
+              <p className="text-white font-bold mt-1">
+                {formatearMoneda(corteCajaPreview.debit_card_sales)}
+              </p>
+            </div>
+
+            <div className="bg-slate-950 border border-slate-800 rounded-xl p-4">
+              <span className="text-slate-400">Crédito / Otros</span>
+              <p className="text-white font-bold mt-1">
+                {formatearMoneda(
+                  corteCajaPreview.credit_sales + corteCajaPreview.other_sales
+                )}
+              </p>
+            </div>
+          </div>
+
+          <div className="border-t border-slate-800 pt-5 space-y-4">
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">
+                Efectivo entregado físicamente *
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={efectivoEntregadoCorte}
+                onChange={(e) => setEfectivoEntregadoCorte(e.target.value)}
+                placeholder="0.00"
+                className="w-full md:w-72 bg-slate-950 border border-amber-700 rounded-xl px-3 py-2 text-white text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">
+                Notas / observaciones
+              </label>
+              <textarea
+                value={notasCorteCaja}
+                onChange={(e) => setNotasCorteCaja(e.target.value)}
+                rows={3}
+                placeholder="Ej. Entrega realizada en caja fuerte al finalizar turno."
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white text-sm"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={guardarCorteCaja}
+              disabled={cargandoCorteCaja || corteCajaGuardado}
+              className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 text-white font-bold px-5 py-2.5 rounded-xl text-xs cursor-pointer disabled:cursor-not-allowed"
+            >
+              {corteCajaGuardado ? 'Corte guardado' : 'Guardar corte de caja'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  </div>
+)}
 
           {/* MÓDULO DE REPORTES FINANCIEROS */}
           {moduloActivo === 'reportes' && verificarPermisoModulo('reportes') && (
