@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 
 interface ComponentePaquete {
@@ -359,6 +359,63 @@ const LISTA_MODULOS_DISPONIBLES = [
   { id: 'usuarios', nombre: '🔒 Gestión de Usuarios y Roles' }
 ];
 
+function BuscadorProductoInventario({
+  productos,
+  onSeleccionar
+}: {
+  productos: ProductoCatalogo[];
+  onSeleccionar: (producto: ProductoCatalogo) => void;
+}) {
+  const [busqueda, setBusqueda] = useState('');
+  const [terminoBusqueda, setTerminoBusqueda] = useState('');
+  useEffect(() => {
+  const timer = window.setTimeout(() => {
+    setTerminoBusqueda(busqueda);
+  }, 250);
+
+  return () => window.clearTimeout(timer);
+}, [busqueda]);
+
+  const resultados = useMemo(() => {
+    const termino = terminoBusqueda.trim().toLowerCase();
+
+    if (!termino) return [];
+
+    return productos
+      .filter((p: ProductoCatalogo) =>
+        p.nombre.toLowerCase().includes(termino) ||
+        p.codigo.toLowerCase().includes(termino) ||
+        p.claveInterna.toLowerCase().includes(termino)
+      )
+      .slice(0, 20);
+  }, [terminoBusqueda, productos]);
+
+  return (
+    <div className="space-y-2">
+      <input
+        type="text"
+        placeholder="Ej. EQ-001 o Caminadora..."
+        value={busqueda}
+        onChange={(e) => setBusqueda(e.target.value)}
+        className="w-full bg-slate-950 border border-blue-600 rounded-xl px-4 py-3 text-sm text-white font-mono"
+        autoFocus
+      />
+
+      <div className="max-h-40 overflow-y-auto space-y-1 pt-2">
+        {resultados.map((p: ProductoCatalogo) => (
+          <div
+            key={p.id}
+            onClick={() => onSeleccionar(p)}
+            className="p-2 hover:bg-slate-800 rounded-xl cursor-pointer flex justify-between text-xs"
+          >
+            <span className="text-white font-bold">{p.nombre}</span>
+            <span className="text-blue-400 font-mono">{p.codigo}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 export default function DashboardPage() {
   const [usuarioLogueado, setUsuarioLogueado] = useState<UsuarioSistema | null>(null);
   // Evita mostrar la pantalla de login antes de comprobar si existe una sesión guardada.
@@ -6264,21 +6321,21 @@ const registrarNuevoRolSistema = async (e: React.FormEvent) => {
 // PAGINACIÓN DEL CATÁLOGO DE PRODUCTOS
 const PRODUCTOS_POR_PAGINA = 20;
 const [paginaProductos, setPaginaProductos] = useState(1);
-const terminoBusquedaProductos = busquedaProductosCatalogo
-  .trim()
-  .toLowerCase();
+const productosCatalogoFiltrados = useMemo(() => {
+  const termino = busquedaProductosCatalogo
+    .trim()
+    .toLowerCase();
 
-const productosCatalogoFiltrados = catalogoProductos.filter(
-  (producto: ProductoCatalogo) => {
-    if (!terminoBusquedaProductos) return true;
-
-    return (
-      producto.nombre.toLowerCase().includes(terminoBusquedaProductos) ||
-      producto.codigo.toLowerCase().includes(terminoBusquedaProductos) ||
-      producto.claveInterna.toLowerCase().includes(terminoBusquedaProductos)
-    );
+  if (!termino) {
+    return catalogoProductos;
   }
-);
+
+  return catalogoProductos.filter((producto: ProductoCatalogo) =>
+    producto.nombre.toLowerCase().includes(termino) ||
+    producto.codigo.toLowerCase().includes(termino) ||
+    producto.claveInterna.toLowerCase().includes(termino)
+  );
+}, [busquedaProductosCatalogo, catalogoProductos]);
 const totalPaginasProductos = Math.max(
   1,
   Math.ceil(productosCatalogoFiltrados.length / PRODUCTOS_POR_PAGINA)
@@ -8126,28 +8183,13 @@ const inventarioPaginado = inventarioFiltradoUsuario.slice(
                           <label className="text-xs text-slate-400">Escriba o escanee código de barras / SKU:</label>
                           <button type="button" onClick={() => setCamaraInventarioActiva(!camaraInventarioActiva)} className="text-[10px] bg-purple-600 text-white px-2.5 py-1 rounded font-bold cursor-pointer">📷 Escanear con Cámara</button>
                         </div>
-                        <input
-                          type="text"
-                          placeholder="Ej. EQ-001 o Caminadora..."
-                          value={busquedaInventarioModal}
-                          onChange={(e) => {
-                            setBusquedaInventarioModal(e.target.value);
-                            const encontrado = catalogoProductos.find(p => p.codigo.toLowerCase() === e.target.value.trim().toLowerCase() || p.nombre.toLowerCase().includes(e.target.value.trim().toLowerCase()));
-                            if (encontrado) {
-                              setProductoIngreso(encontrado);
-                            }
-                          }}
-                          className="w-full bg-slate-950 border border-blue-600 rounded-xl px-4 py-3 text-sm text-white font-mono"
-                          autoFocus
-                        />
-                        <div className="max-h-40 overflow-y-auto space-y-1 pt-2">
-                          {catalogoProductos.filter((p: ProductoCatalogo) => p.nombre.toLowerCase().includes(busquedaInventarioModal.toLowerCase()) || p.codigo.toLowerCase().includes(busquedaInventarioModal.toLowerCase())).map((p: ProductoCatalogo) => (
-                            <div key={p.id} onClick={() => setProductoIngreso(p)} className="p-2 hover:bg-slate-800 rounded-xl cursor-pointer flex justify-between text-xs">
-                              <span className="text-white font-bold">{p.nombre}</span>
-                              <span className="text-blue-400 font-mono">{p.codigo}</span>
-                            </div>
-                          ))}
-                        </div>
+                        <BuscadorProductoInventario
+  productos={catalogoProductos}
+  onSeleccionar={(producto) => {
+    setProductoIngreso(producto);
+  }}
+/>
+                        
                       </div>
                     ) : (
                       <form onSubmit={procesarIngresoInventario} className="space-y-3 text-xs">
