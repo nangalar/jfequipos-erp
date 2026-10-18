@@ -416,6 +416,54 @@ function BuscadorProductoInventario({
     </div>
   );
 }
+function BuscadorCatalogoProductos({
+  valorInicial,
+  onBuscar
+}: {
+  valorInicial: string;
+  onBuscar: (texto: string) => void;
+}) {
+  const [texto, setTexto] = useState(valorInicial);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      onBuscar(texto);
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [texto, onBuscar]);
+
+  return (
+    <div className="flex flex-col md:flex-row gap-3 items-center">
+      <div className="relative flex-1 w-full">
+        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+          🔎
+        </span>
+
+        <input
+          type="text"
+          value={texto}
+          onChange={(e) => setTexto(e.target.value)}
+          placeholder="Buscar producto por nombre, SKU o clave..."
+          className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-11 pr-4 py-3 text-sm text-white focus:border-blue-500 outline-none"
+        />
+      </div>
+
+      {texto && (
+        <button
+          type="button"
+          onClick={() => {
+            setTexto('');
+            onBuscar('');
+          }}
+          className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-3 rounded-xl text-xs font-bold cursor-pointer"
+        >
+          ✕ Limpiar
+        </button>
+      )}
+    </div>
+  );
+}
 export default function DashboardPage() {
   const [usuarioLogueado, setUsuarioLogueado] = useState<UsuarioSistema | null>(null);
   // Evita mostrar la pantalla de login antes de comprobar si existe una sesión guardada.
@@ -7989,34 +8037,10 @@ const inventarioPaginado = inventarioFiltradoUsuario.slice(
 
 {/* BUSCADOR DEL CATÁLOGO DE PRODUCTOS */}
 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
-  <div className="flex flex-col md:flex-row gap-3 items-center">
-    <div className="relative flex-1 w-full">
-      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
-        🔎
-      </span>
-
-      <input
-        type="text"
-        value={busquedaProductosCatalogo}
-        onChange={(e) => {
-  setBusquedaProductosCatalogo(e.target.value);
-  setPaginaProductos(1);
-}}
-        placeholder="Buscar producto por nombre, SKU o clave..."
-        className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-11 pr-4 py-3 text-sm text-white focus:border-blue-500 outline-none"
-      />
-    </div>
-
-    {busquedaProductosCatalogo && (
-      <button
-        type="button"
-        onClick={() => setBusquedaProductosCatalogo('')}
-        className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-3 rounded-xl text-xs font-bold cursor-pointer"
-      >
-        ✕ Limpiar
-      </button>
-    )}
-  </div>
+  <BuscadorCatalogoProductos
+  valorInicial={busquedaProductosCatalogo}
+  onBuscar={setBusquedaProductosCatalogo}
+/>
 
   <p className="text-[10px] text-slate-500 mt-2">
     Mostrando {productosCatalogoFiltrados.length} de {catalogoProductos.length} productos
