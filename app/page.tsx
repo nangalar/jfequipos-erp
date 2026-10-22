@@ -568,6 +568,7 @@ const [busquedaInventarioLista, setBusquedaInventarioLista] = useState<string>('
   const [pProductosAsociados, setPProductosAsociados] = useState<string[]>([]);
   const [pTiempoEntrega, setPTiempoEntrega] = useState('5 días');
   const [pEstatus, setPEstatus] = useState<'Activo' | 'Inactivo'>('Activo');
+  const [busquedaHistorial, setBusquedaHistorial] = useState('');
 
   // Estados Inventario / Kardex
   const [busquedaInventarioModal, setBusquedaInventarioModal] = useState<string>('');
@@ -863,6 +864,17 @@ const historialVisibleUsuario = usuarioEsAdministrador
         )
       }))
       .filter((t: TicketGuardado) => t.items.length > 0);
+      const historialFiltrado = historialVisibleUsuario.filter((t: TicketGuardado) => {
+  const termino = busquedaHistorial.trim().toLowerCase();
+
+  if (!termino) return true;
+
+  return (
+    t.folio.toLowerCase().includes(termino) ||
+    t.cliente.toLowerCase().includes(termino) ||
+    t.sucursal.toLowerCase().includes(termino)
+  );
+});
   useEffect(() => {
     let stream: MediaStream | null = null;
     if (camaraActiva || camaraAltaActiva || camaraInventarioActiva || camaraAuditoriaActiva) {
@@ -10596,8 +10608,17 @@ const inventarioPaginado = inventarioFiltradoUsuario.slice(
           {moduloActivo === 'historial' && verificarPermisoModulo('historial') && (
             <div className="space-y-6">
               <h3 className="text-xl font-bold text-white">Historial de Tickets y Reimpresión</h3>
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+  <input
+    type="text"
+    value={busquedaHistorial}
+    onChange={(e) => setBusquedaHistorial(e.target.value)}
+    placeholder="Buscar por folio, cliente o sucursal..."
+    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white focus:border-blue-500 outline-none"
+  />
+</div>
               <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
-                {historialVisibleUsuario.length === 0 ? (
+               {historialFiltrado.length === 0 ? (
                   <div className="p-12 text-center text-slate-500 text-sm">No hay tickets registrados.</div>
                 ) : (
                   <div className="overflow-x-auto">
@@ -10607,17 +10628,21 @@ const inventarioPaginado = inventarioFiltradoUsuario.slice(
                           <th className="p-4">Folio</th>
                           <th className="p-4">Fecha</th>
                           <th className="p-4">Cliente</th>
+                          <th className="p-4">Sucursal</th>
                           <th className="p-4">Pago</th>
                           <th className="p-4">Total</th>
                           <th className="p-4 text-center">Acción</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/60 text-sm">
-                        {historialVisibleUsuario.map((t: TicketGuardado, i: number) => (
+                        {historialFiltrado.map((t: TicketGuardado, i: number) => (
                           <tr key={i} className="hover:bg-slate-800/40">
                             <td className="p-4 font-mono text-blue-400 font-bold text-xs">{t.folio}</td>
                             <td className="p-4 text-slate-400 text-xs">{t.fecha}</td>
                             <td className="p-4 text-white text-xs">{t.cliente}</td>
+                            <td className="p-4 text-slate-300 text-xs">
+  {t.sucursal}
+</td>
                             <td className="p-4 text-amber-400 text-xs">{t.metodoPago}</td>
                             <td className="p-4 text-emerald-400 font-bold text-xs">{formatearMoneda(t.total)}</td>
                             <td className="p-4 text-center">
