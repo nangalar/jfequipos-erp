@@ -569,6 +569,8 @@ const [busquedaInventarioLista, setBusquedaInventarioLista] = useState<string>('
   const [pTiempoEntrega, setPTiempoEntrega] = useState('5 días');
   const [pEstatus, setPEstatus] = useState<'Activo' | 'Inactivo'>('Activo');
   const [busquedaHistorial, setBusquedaHistorial] = useState('');
+  const [paginaHistorial, setPaginaHistorial] = useState(1);
+  const ticketsPorPagina = 20;
 
   // Estados Inventario / Kardex
   const [busquedaInventarioModal, setBusquedaInventarioModal] = useState<string>('');
@@ -875,7 +877,7 @@ const historialVisibleUsuario = usuarioEsAdministrador
     t.sucursal.toLowerCase().includes(termino)
   );
 });
-  useEffect(() => {
+    useEffect(() => {
     let stream: MediaStream | null = null;
     if (camaraActiva || camaraAltaActiva || camaraInventarioActiva || camaraAuditoriaActiva) {
       navigator.mediaDevices?.getUserMedia({ video: { facingMode: 'environment' } })
@@ -10612,7 +10614,10 @@ const inventarioPaginado = inventarioFiltradoUsuario.slice(
   <input
     type="text"
     value={busquedaHistorial}
-    onChange={(e) => setBusquedaHistorial(e.target.value)}
+    onChange={(e) => {
+  setBusquedaHistorial(e.target.value);
+  setPaginaHistorial(1);
+}}
     placeholder="Buscar por folio, cliente o sucursal..."
     className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white focus:border-blue-500 outline-none"
   />
@@ -10635,7 +10640,9 @@ const inventarioPaginado = inventarioFiltradoUsuario.slice(
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/60 text-sm">
-                        {historialFiltrado.map((t: TicketGuardado, i: number) => (
+                        {historialFiltrado
+  .slice((paginaHistorial - 1) * 20, paginaHistorial * 20)
+  .map((t: TicketGuardado, i: number) => (
                           <tr key={i} className="hover:bg-slate-800/40">
                             <td className="p-4 font-mono text-blue-400 font-bold text-xs">{t.folio}</td>
                             <td className="p-4 text-slate-400 text-xs">{t.fecha}</td>
@@ -10697,6 +10704,44 @@ const inventarioPaginado = inventarioFiltradoUsuario.slice(
                         ))}
                       </tbody>
                     </table>
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-4 border-t border-slate-800 bg-slate-950/30">
+  <button
+    type="button"
+    onClick={() => setPaginaHistorial((pagina) => Math.max(1, pagina - 1))}
+    disabled={paginaHistorial <= 1}
+    className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-800 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-700 cursor-pointer"
+  >
+    ← Anterior
+  </button>
+
+  <div className="text-xs text-slate-400">
+    Página <span className="text-white font-bold">{paginaHistorial}</span> de{' '}
+    <span className="text-white font-bold">
+      {Math.max(1, Math.ceil(historialFiltrado.length / ticketsPorPagina))}
+    </span>
+    {' · '}
+    {historialFiltrado.length} tickets
+  </div>
+
+  <button
+    type="button"
+    onClick={() =>
+      setPaginaHistorial((pagina) =>
+        Math.min(
+          Math.max(1, Math.ceil(historialFiltrado.length / ticketsPorPagina)),
+          pagina + 1
+        )
+      )
+    }
+    disabled={
+      paginaHistorial >=
+      Math.max(1, Math.ceil(historialFiltrado.length / ticketsPorPagina))
+    }
+    className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-blue-500 cursor-pointer"
+  >
+    Siguiente →
+  </button>
+</div>
                   </div>
                 )}
               </div>
